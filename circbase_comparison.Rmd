@@ -1,0 +1,83 @@
+---
+title: "Comparison to CircBase"
+author: Tomás Germade
+date: July 17, 2019
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library}
+suppressPackageStartupMessages({
+  library(GenomicRanges)
+  library(rtracklayer)})
+```
+
+```{r setwd, warning=FALSE}
+setwd("~/Documents/R_stuff/")
+```
+# Import
+```{r import}
+# import dcc datasets
+ribo_dcc <- read.table("/mnt/ins/mouse_ribozero_hippocampus/circtools/01_detect/mouse_ribozero_hippocampus/output/CircRNACount", header = TRUE, sep = "\t")
+rnaser_dcc <- read.table("/mnt/ins/mouse_RNAseR_hippocampus/circtools/01_detect/mouse_RNAseR_hippocampus/output/CircRNACount", header = TRUE, sep = "\t")
+# import bed datassets
+rnaser_bed <- read.table("/mnt/schratt/tgermade_test/salmon/mouse_RNAseR_hippocampus/1746_combined.exon_counts.bed", header = FALSE, sep = "\t")
+colnames(rnaser_bed) <- c("Chr","Start","End","Name","Counts","Strand",
+                   "ExonStart","ExonEnd","Color","ExonNr","ExonLen","RelExonStart")
+circbase_bed <- read.table("../Schratt_Lab/circbase_mouse_mm10.bed", header = TRUE, sep = "\t")
+colnames(circbase_bed) <- c("Chr","Start","End","Name","Counts","Strand",
+                   "ExonStart","ExonEnd","Color","ExonNr","ExonLen","RelExonStart")
+```
+# FUCHS quantification
+## Process
+```{r adjust rnaser coordinates}
+# modify rnaser bed start coordinates to be compatible with circbase bed
+rnaser_bed$Start <- rnaser_bed$Start - 1
+```
+
+```{r extract rnaser coordinates}
+# extract transcript coordinates
+c_rnaser_bed <- paste(rnaser_bed$Chr, rnaser_bed$Start, rnaser_bed$End)
+c_circbase_bed <- paste(circbase_bed$Chr, circbase_bed$Start, circbase_bed$End)
+```
+## Analysis
+```{r bed matches}
+# find matching transcripts between dcc and bed
+m_bed <- lapply( c_rnaser_bed, FUN=function(x) which(c_circbase_bed==x) )
+table(sapply(m_bed, length))
+table(sapply(m_bed, length))[2] / nrow(circbase_bed)
+```
+--> we find 65% of CircBase transcripts in our RNAseR quantification
+
+# DCC quantification
+## Process
+```{r adjust dcc coordinates}
+# modify rnaser bed start coordinates to be compatible with circbase bed
+ribo_dcc$Start <- ribo_dcc$Start - 1
+rnaser_dcc$Start <- rnaser_dcc$Start - 1
+```
+
+```{r extract dcc coordinates}
+# extract transcript coordinates
+c_ribo_dcc <- paste(ribo_dcc$Chr, ribo_dcc$Start, ribo_dcc$End)
+c_rnaser_dcc <- paste(rnaser_dcc$Chr, rnaser_dcc$Start, rnaser_dcc$End)
+```
+
+## Analysis
+```{r dcc matches}
+# find matching transcripts between dcc and bed
+m_ribo_dcc <- lapply( c_ribo_dcc, FUN=function(x) which(c_circbase_bed==x) )
+m_rnaser_dcc <- lapply( c_rnaser_dcc, FUN=function(x) which(c_circbase_bed==x) )
+table(sapply(m_ribo_dcc, length))
+table(sapply(m_rnaser_dcc, length))
+table(sapply(m_ribo_dcc, length))[2] / nrow(circbase_bed)
+table(sapply(m_rnaser_dcc, length))[2] / nrow(circbase_bed)
+```
+--> we find 11% of CircBase transcripts in the RiboZero DCC  
+--> we find 99% of CircBase transcripts in the RNAseR DCC
+
+
+

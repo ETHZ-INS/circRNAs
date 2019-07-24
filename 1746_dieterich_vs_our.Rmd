@@ -1,0 +1,233 @@
+---
+title: "Project Pierre"
+author: Tomás Germade
+date: July 12, 2019
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r library}
+suppressPackageStartupMessages({
+  library(LSD)
+})
+```
+
+# Import
+## salmon
+```{r import salmon}
+setwd("/mnt/schratt/tgermade_test/salmon/mouse_RNAseR_dieterich/mouse_RNAseR_old_w/transcripts_quant_1746_D_comb/")
+d_w <- read.table("quant.sf", header = TRUE, sep = "\t")
+setwd("/mnt/schratt/tgermade_test/salmon/mouse_RNAseR_dieterich/mouse_RNAseR_old_wo/transcripts_quant_1746_D_circ/")
+d_wo <- read.table("quant.sf", header = TRUE, sep = "\t")
+setwd("/mnt/schratt/tgermade_test/salmon/mouse_RNAseR_hippocampus/mouse_RNAseR_new_w/transcripts_quant_1746_D_comb/")
+o_w <- read.table("quant.sf", header = TRUE, sep = "\t")
+setwd("/mnt/schratt/tgermade_test/salmon/mouse_RNAseR_hippocampus/mouse_RNAseR_new_wo/transcripts_quant_1746_D_circ/")
+o_wo <- read.table("quant.sf", header = TRUE, sep = "\t")
+
+```
+## fuchs
+```{r import fuchs}
+setwd("/mnt/schratt/dieterich_circRNA_structures/")
+d_fuchs <- read.table("1746_D_exon_chain_12.bed", header = FALSE, sep = "\t")
+colnames(d_fuchs) <- c("Chr","CircStart","CircEnd","Name","Counts","Strand",
+                       "Start","End","Color","ExonNr","ExonLen","ExonStart")
+setwd("/mnt/ins/mouse_RNAseR_hippocampus/circtools/03_reconstruct/1746_D/")
+o_fuchs <- read.table("1746_D.exon_counts.bed", header = FALSE, sep = "\t")
+colnames(o_fuchs) <- c("Chr","CircStart","CircEnd","Name","Counts","Strand",
+                       "Start","End","Color","ExonNr","ExonLen","ExonStart")
+```
+
+# Processing 
+
+```{r renaming}
+# replace Names of Dieterich datasets to fit each other
+d_fuchs$Name <- sapply( d_fuchs$Name, 
+                        function(x) unlist(strsplit(as.character(x), "[|]"))[1] )
+d_fuchs$Name <- paste(d_fuchs$Name, d_fuchs$ExonLen, d_fuchs$ExonStart, sep = ":")
+
+d_w$Name <- as.factor( gsub(";[^:]+:", ":", d_w$Name) )
+d_wo$Name <- as.factor( gsub(";[^:]+:", ":", d_wo$Name) )
+# generate concatenated name for our FUCHS dataset
+o_fuchs$Name <- paste(o_fuchs$Name, o_fuchs$ExonLen, o_fuchs$ExonStart, sep = ":")
+```
+
+```{r remove duplicates}
+# drop duplicates
+d_w <- d_w[!duplicated(d_w$Name),]
+d_wo <- d_wo[!duplicated(d_wo$Name),]
+o_w <- o_w[!duplicated(o_w$Name),]
+o_wo <- o_wo[!duplicated(o_wo$Name),]
+d_fuchs <- d_fuchs[!duplicated(d_fuchs$Name),]
+o_fuchs <- o_fuchs[!duplicated(o_fuchs$Name),]
+```
+
+```{r rename rows}
+# change indices of data.frames to name values
+row.names(d_w) <- d_w$Name
+row.names(d_wo) <- d_wo$Name
+row.names(o_w) <- o_w$Name
+row.names(o_wo) <- o_wo$Name
+row.names(d_fuchs) <- d_fuchs$Name
+row.names(o_fuchs) <- o_fuchs$Name
+```
+
+```{r intersects}
+# get Salmon v FUCHS intersects
+## dieterich w
+int_d_w <- intersect(d_w$Name, d_fuchs$Name)
+## dieterich w/o
+int_d_wo <- intersect(d_wo$Name, d_fuchs$Name)
+## ours w
+int_o_w <- intersect(o_w$Name, o_fuchs$Name)
+## ours w/o
+int_o_wo <- intersect(o_wo$Name, o_fuchs$Name)
+```
+
+```{r counts}
+# get counts
+counts_d_w <- data.frame( "TPM" = d_w[int_d_w, "TPM"] )
+counts_d_wo <- data.frame( "TPM" = d_wo[int_d_wo, "TPM"] )
+counts_d_fuchs <- data.frame( "Counts" = d_fuchs[int_d_w, "Counts"] )
+counts_o_w <- data.frame( "TPM" = o_w[int_o_w, "TPM"] )
+counts_o_wo <- data.frame( "TPM" = o_wo[int_o_wo, "TPM"] )
+counts_o_fuchs <- data.frame( "Counts" = o_fuchs[int_o_w, "Counts"] )
+```
+
+## test intersects
+```{r test, echo=TRUE}
+# test
+all(int_d_w == int_d_wo)
+all(int_o_w == int_o_wo)
+```
+
+```{r rename count rows}
+rownames(counts_d_w) <- int_d_w
+rownames(counts_d_wo) <- int_d_wo
+rownames(counts_d_fuchs) <- int_d_w
+rownames(counts_o_w) <- int_o_w
+rownames(counts_o_wo) <- int_o_wo
+rownames(counts_o_fuchs) <- int_o_w
+```
+
+```{r join dataframes}
+# Dieterich with lin-transcripts: salmon vs fuchs
+df_d_w <- data.frame(log1p(counts_d_w), log1p(counts_d_fuchs))
+# Dieterich without lin-transcripts: salmon vs fuchs
+df_d_wo <- data.frame(log1p(counts_d_wo), log1p(counts_d_fuchs))
+# ours with lin-transcripts: salmon vs fuchs
+df_o_w <- data.frame(log1p(counts_o_w), log1p(counts_o_fuchs))
+# ours without lin-transcripts: salmon vs fuchs
+df_o_wo <- data.frame(log1p(counts_o_wo), log1p(counts_o_fuchs))
+```
+
+# Analysis
+## Dieterich with linear transcripts
+```{r dieterich with, echo=TRUE}
+heatscatter(df_d_w$TPM, df_d_w$Counts)
+cor(df_d_w$TPM, df_d_w$Counts)
+
+length(intersect(d_w$Name, d_fuchs$Name))
+
+length(d_fuchs$Name)
+
+# how many entries intersect with Fuchs and don't have 0 counts:
+num_dw_int_nc <- length(na.omit(match(d_w$Name[d_w$TPM != 0], int_d_w)))
+num_d_fuchs <- length(d_fuchs$Name)
+num_dw_int_nc/num_d_fuchs
+```
+--> 66% of the Fuchs entries are found in Salmon and aren't 0
+```{r dieterich with 2, echo=TRUE}
+num_dw_nc <- length(d_w$TPM[d_w$TPM != 0])
+num_dw_int_nc/num_dw_nc
+```
+--> 13% of the non-cero entries overlap with Fuchs
+
+Salmon with linear transcript finds ~5x as many counts as Fuchs. Salmon finds counts for 66% of the transcripts found by Fuchs. However, the correlation of the count values is very bad
+
+```{r dieterich with 3, echo=TRUE}
+# sum of non-cero counts overlapping with Fuchs
+sum_over_dw <- sum(d_w[intersect(d_w$Name[d_w$TPM != 0], int_d_w),"TPM"])
+# sum of non-cero counts not overlapping with Fuchs
+sum_nover_dw <- sum(d_w[setdiff(d_w$Name[d_w$TPM != 0], int_d_w),"TPM"])
+sum_over_dw/(sum_over_dw + sum_nover_dw)
+```
+--> 53% of all counts are found in the set overlapping with Fuchs
+(We'd love to see a high percentage here)
+
+## Dieterich without linear transcripts
+```{r dieterich without, echo=TRUE}
+heatscatter(df_d_wo$TPM, df_d_wo$Counts)
+cor(df_d_wo$TPM, df_d_wo$Counts)
+
+length(intersect(d_wo$Name, d_fuchs$Name))
+
+# how many entries intersect with Fuchs and don't have 0 counts:
+num_dwo_int_nc <- length(na.omit(match(d_wo$Name[d_wo$TPM != 0], int_d_wo)))
+num_dwo_int_nc/num_d_fuchs
+```
+--> 67% of the Fuchs entries are found in Salmon and aren't 0
+```{r dieterich without 2, echo=TRUE}
+num_dwo_nc <- length(d_wo$TPM[d_wo$TPM != 0])
+num_dwo_int_nc/num_dwo_nc
+```
+--> 100% of the non-cero entries overlap with Fuchs (naturally)
+
+Salmon without linear transcript finds ~2/3x the counts of Fuchs (67% of the Fuchs transcripts). The correlation is still bad
+
+## Ours with linear transcripts
+```{r ours with, echo=TRUE}
+heatscatter(df_o_w$TPM, df_o_w$Counts)
+cor(df_o_w$TPM, df_o_w$Counts)
+
+length(intersect(o_w$Name, o_fuchs$Name))
+
+length(o_fuchs$Name)
+
+# how many entries intersect with Fuchs and don't have 0 counts:
+num_ow_int_nc <- length(na.omit(match(o_w$Name[o_w$TPM != 0], int_o_w)))
+num_o_fuchs <- length(o_fuchs$Name)
+num_ow_int_nc/num_o_fuchs
+```
+--> 62% of the Fuchs entries are found in Salmon and aren't 0
+```{r ours with 2, echo=TRUE}
+num_ow_nc <- length(o_w$TPM[o_w$TPM != 0])
+num_ow_int_nc/num_ow_nc
+```
+--> 13% of the non-cero entries overlap with Fuchs
+
+Salmon with linear transcript finds ~5x as many counts as Fuchs. Salmon finds counts for ~62% of the transcripts found by Fuchs.
+
+```{r ours with 3, echo=TRUE}
+# sum of non-cero counts overlapping with Fuchs
+sum_over_ow <- sum(o_w[intersect(o_w$Name[o_w$TPM != 0], int_o_w),"TPM"])
+# sum of non-cero counts not overlapping with Fuchs
+sum_nover_ow <- sum(o_w[setdiff(o_w$Name[o_w$TPM != 0], int_o_w),"TPM"])
+sum_over_ow/(sum_over_ow + sum_nover_ow)
+```
+--> 17% of all counts are found in the set overlapping with Fuchs
+(We'd love to see a high percentage here)
+
+## Ours without linear transcripts
+```{r ours without, echo=TRUE}
+heatscatter(df_o_wo$TPM, df_o_wo$Counts)
+cor(df_o_wo$TPM, df_o_wo$Counts)
+
+length(intersect(o_wo$Name, o_fuchs$Name))
+
+# how many entries intersect with Fuchs and don't have 0 counts:
+num_owo_int_nc <- length(na.omit(match(o_wo$Name[o_wo$TPM != 0], int_o_wo)))
+num_owo_int_nc/num_o_fuchs
+```
+--> 88% of the Fuchs entries are found in Salmon and aren't 0
+```{r ours without 2, echo=TRUE}
+num_owo_nc <- length(o_wo$TPM[o_wo$TPM != 0])
+num_owo_int_nc/num_owo_nc
+```
+--> 100% of the non-cero entries overlap with Fuchs (naturally)
+
+Salmon without linear transcript finds ~7/8x the counts of Fuchs (88% of the Fuchs transcripts).
+
