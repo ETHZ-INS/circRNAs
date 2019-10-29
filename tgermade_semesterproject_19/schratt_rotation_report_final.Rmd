@@ -80,17 +80,19 @@ All resources stem from GENCODE GRCm8.p5 mouse libraries:
   
 ## Scripts
 
-* `bed_index_merger.R`  
-* `circIndex_generator.sh`  
-* `circtools_master.sh`  
-* `fuchs_adjust_coordinates.sh`  
-* `gtf_to_bed6_converter.R`  
-* `schratt_rotation_functions.R`  
-* `schratt_rotation_process.R`  
-* `schratt_rotation_report.Rmd`
-* `slurm_circtools_detect_mapping.sh`  
+* [`bed_index_merger.R`](https://github.com/ETHZ-INS/circRNAs/blob/master/tgermade_semesterproject_19/bed_index_merger.R)  
+* [`circIndex_generator.sh`](https://github.com/ETHZ-INS/circRNAs/blob/master/tgermade_semesterproject_19/circIndex_generator.sh)  
+* [`circtools_master.sh`](https://github.com/ETHZ-INS/circRNAs/blob/master/tgermade_semesterproject_19/circtools_master.sh)  
+* [`fuchs_adjust_coordinates.sh`](https://github.com/ETHZ-INS/circRNAs/blob/master/tgermade_semesterproject_19/fuchs_adjust_coordinates.sh)  
+* [`gtf_to_bed6_converter.R`](https://github.com/ETHZ-INS/circRNAs/blob/master/tgermade_semesterproject_19/gtf_to_bed6_converter.R)  
+* [`schratt_rotation_functions.R`](https://github.com/ETHZ-INS/circRNAs/blob/master/tgermade_semesterproject_19/schratt_rotation_functions.R)  
+* [`schratt_rotation_process.R`](https://github.com/ETHZ-INS/circRNAs/blob/master/tgermade_semesterproject_19/schratt_rotation_process.R)  
+* [`schratt_rotation_report.Rmd`](https://github.com/ETHZ-INS/circRNAs/blob/master/tgermade_semesterproject_19/schratt_rotation_report_final.Rmd)
+* [`slurm_circtools_detect_mapping.sh`](https://github.com/ETHZ-INS/circRNAs/blob/master/tgermade_semesterproject_19/slurm_circtools_detect_mapping.sh)  
 
 ## Files
+
+All the files can be found [here](https://github.com/ETHZ-INS/circRNAs/tree/master/tgermade_semesterproject_19).  
 
 * `circbase.RData`  
 * `list_f_rnaser.RData`  
