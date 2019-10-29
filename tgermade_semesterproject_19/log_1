@@ -1,0 +1,2863 @@
+-------------------------------------------------------------------------
+--------------------------------- LOG -----------------------------------
+-------------------------------------------------------------------------
+
+
+# Mi, 29.05.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Up to now:/ 
+ran circtools detect and circtools reconstruct on mouse_RNAseR dataset with genome reference GRCm38.p5 (GENCODE)
+(circtools reconstruct only ran after manual addition of 2 links)
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Incident:/ 
+circtools reconstruct gave no output and no error messages after running overnight on server screen
+EDIT: error message: 
+<ERROR, no such file or directory: /mnt/schratt/tgermade_test/circtools/01_detect/_tmp_DCC/CircRNACount>
+/Possible issues #1:/ 
+On circtools documentation outputs for circtools detect are listed. Initial checks left me suspicious that they weren't properly generated. I checked again and that seems to be the case. I tried to run the module circtools quickcheck to assess the state of received output. -> would not run, giving message: <CircRNACount cannot be found, exiting.> CircRNACount is one of the outputs I should have received according to the documentation. The documentation says: 
+"The output of circtools detect consists of the following four files: CircRNACount, CircCoordinates, LinearCount and CircSkipJunctions."
+What I instead received was a directory called _tmp_DCC containing 18 tmp_* files.
+
+/Fix attempt #1:/ [CLOSED]
+retrace circtools detect workflow and check potential issues [OPEN]
+/Possible issues #1.1:/ [CLOSED]
+At very start the documentation tells how to check if DCC was successfully installed via <DCC --version>. I got an error message because the server uses python3 by default. After <source activate python27> this was resolved. --> false alarm: I did run circtools detect on python27.
+/Possible issues #1.2:/ [CLOSED]
+Does STAR have to run on python27? (unlikely) -> "This package is tested under Linux using Python 2.7, 3.4, 3.5, and 3.6." (also, the STAR outputs look genuine)
+/Possible issues #1.3:/ [CLOSED]
+I ran circtools detect without masker GTF file. The documentation says: "It is strongly recommended to specify a repetitive region file in GTF format for filtering." which implies that it's optional.
+/Possible issues #1.4:/ [CLOSED]
+Maybe the output is in a different directory and the _tmp_DCC directory is only created to create the actual output. Can't find evidence for that. File CircRNACount is nowhere to be found.
+/Possible issues #1.5:/ [CLOSED]
+Mabybe the warning only calls the file CircRNACount but the program actually searches for a slightly different named file. -> No, i checked the circtools_quickcheck_wrapper.R code:
+<CircRNACount <- read.delim(paste(arg_dcc_data, "CircRNACount", sep="/"), check.names=FALSE, header = T)>
+It also searches a file called LinearCount.
+Checking python script quickcheck.py (script which calls circtools_quickcheck_wrapper.R):
+<# check DCC files (only existence, not the content)
+ self.check_input_files([
+                         self.cli_params.DCC_dir+"CircRNACount",
+                         self.cli_params.DCC_dir+"LinearCount",
+                         self.cli_params.DCC_dir+"CircCoordinates"
+                         ])>
+
+/Possible issues #1.6:/ [CLOSED]
+Let's check the code for circtools detect.
+circtools.py:
+<parser.add_argument("-t", "--temp", dest="tmp_dir", default="_tmp_DCC/",
+                            help="DCC temporary directory 
+                            [default: _tmp_DCC/]")>
+-> _tmp_DCC really is a temporary directory. This file then calls the DCC program. main.py file in DCC directory:
+<parser.add_argument("-O", "--output", dest="out_dir", default="./",
+                        help="DCC output directory [default: .]")>
+<# set output file names
+    output_coordinates = options.out_dir + "CircCoordinates"
+    output_circ_counts = options.out_dir + "CircRNACount"
+    output_linear_counts = options.out_dir + "LinearCount"
+    output_skips = options.out_dir + "CircSkipJunctions">
+
+Was -O specified when I ran it? No! Which means the output should be where I ran the command from. Where?
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Solution:/
+Circtools detect didn't run through the whole script, it stopped at the filtering process. The following option had to be adjusted:
+<-Nr 5 6 \ minimum count in one replicate [1] and number of replicates the candidate has to be detected in [2]>
+
+see circtools_workflow file to check a version that works (except for an error creating CircSkipJunctions)
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+/Flow:/
+Continued without CircSkipJunctions to see if circtools reconstruct is still able to function.
+/Incident:/
+Had an error: <OSError: [Errno 13] Permission denied: '/scratch/global_tmp//'>
+/Solution:/
+Apparently circtools reconstruct tries to access that directory. Just changed it into <'/tmp/global_tmp/'> inside slurm_circtools_reconstruct.sh. 
+
+
+-------------------------------------------------------------------------
+# Fr, 31.05.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Issue:/
+Ran circtools reconstruct and got 2 errors: 1. naming convention of the exon annotation BED6 file, 2. R package "pacman" is not installed.
+/Solution:/
+When creating the exon annotation BED6 file don't get rid of chr part in seqnames(). It has to be able to compare to the aligned read file (Aligned.noS.bam). If the names don't match it won't work.
+Install "pacman".
+/Issue:/
+The R package "pacman" needs permission to download packages (it's a package manager). 
+
+
+-------------------------------------------------------------------------
+# Mo, 03.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project #3:/
+/To do:/
+3.1: Run all of circtools (with flexbar trimming) on mouse data mouse_RNAseR 1746_D & 1746_H (Hippocampus data). Do the same with /mnt/schratt/mouse_control_hippocampus data (whole Hippocampus data, not preprocessed with RNAseR)
+3.2: Compare
+/Project #3.1:/
+Trimming: download wrapper and execute on 1746_D & 1746_H data.
+No rRNA removal for the datasets.
+Run STAR mapping on schratt-samples.
+ _______________________________________________________________________
+| Keep trimming step separate from the detect and reconstruct		|
+| pipeline. They're often already trimmed in a previous pipeline.	|
+| Also: We want our overarching wrapper to be able to identify  	|
+|  paired-end and single-end read datasets (zB by a R1/R2 		|
+|  subcategorization)							|
+ _______________________________________________________________________
+
+-------------------------------------------------------------------------
+# Di, 04.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+Create overarching wrapper to execute STAR & circtools
+/Flow:/
+current version: ~/script.sh
+called via: 
+	script.sh [work directory] [which steps to perform (all, star, 
+		dcc, fuchs)] [reads directory]
+	./script.sh ./testing/ star /mnt/schratt/mouse_RNAseR/raw/
+
+/Project #3.1:/
+/Flow:/
+Successfully ran STAR wrapper on 1746_D & 1746_H data.
+Worked on a more automated way to run STAR on single-end read data (Bohacek wholeH_Homecage)
+Successfully ran STAR sequence on wholeH_Homecage replicates 1 to 5.
+
+-------------------------------------------------------------------------
+# Mi, 05.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project #3.1:/
+/To do:/
+Setup links from /star to /01_detect & txt files for all datasets (each sample should have its own directory).
+(Exon annotation BED6 file DOESN'T need to be created, already exists.)
+Run circtools detect wrapper on 1746_D & 1746_H pair-end read data.
+Run circtools detect wrapper on wholeH_Homecage single-end read data. How?
+
+Find files that were changed less than 30 min ago and delete them:
+>> find ./ ! -type f -cmin -30 | xargs rm
+
+/Issue:/
+In /mnt/schratt/tgermade_test/circtools/01_detect there is the 1746_A_R1 DCC data. I want all DCC data to be sorted in their own directories instead of chaotically bunched together. -> move the 1746_A_R1 data into its folder
+/Solution:/
+Did it manually:
+>> mv ./1746_A_R1* ./1746_A_R1
+>> mv -t 1746_A_R1/ bam_files.txt mate1 mate2 output/ samplesheet
+
+/Issue:/
+The naming of the STAR output files was different btw. pair-end & single-end read data.
+/Solution:/
+Deleted the option >--outFileNamePrefix [sample prefix]\< in the STAR command for the wholeH_Homecage single-end read data. Run STAR on all the wholeH_Homecage samples again. Names look more similar now. This should make downstream uniform handling of the 2 datasets easier (link creation).
+
+/Issue:/
+ran circtools detect on the paired-end 1746_* data. The run couldn't complete even after 12 h (still 1st instance in for-loop!).
+
+ 
+
+-------------------------------------------------------------------------
+# Do, 06.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project #3.1:/
+Tried different variations of circtools detect.
+/Issue:/
+The cluster only ever uses a single thread to compute even when specifying usage of more than 1 (others seem dormant).
+/Solution:/
+Hope that it will finish this time, calling circtools detect in parallel using my wrapper (~/slurm_circtools_detect.sh). Running on 5 instances in parallel, using 4 threads each. This means I'm using 20 out of 16 available threads (I thought mistakenly that there were only 4 instances). Only 5 threads are active (sporadically another thread gets loaded minimally to compensate high usage). 
+
+-------------------------------------------------------------------------
+# Fr, 07.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project #3.1:/
+(10:40) 3 of 5 instances are finished. 1746_D & 1746_D_nf are still running. 2 threads are still working. Better than expected. Theyre running for ca. 16.5 h.
+(13:10) 1 instance left. 1746_D_nf looks effed up, but lets wait until the run is complete.
+(14:10) run complete. 20 hours runtime. All results look good, nothing unexpected.
+/Flow:/
+next step: Do the same for the wholeH_Homecage data. Run 5 instances in parallel using 3 cores each: use 15 out of 16 threads. Expected to run faster than 1746_* data because of smaller files.
+(14:30) launch.
+(15:10) run complete. 40 min runtime. All results look good.
+/Flow:/
+run circtools reconstruct (FUCHS) on paired-end 1746_* data. Running 5 instances with 3 threads each. 
+(17:40) launch.
+-------------------------------------------------------------------------
+# Sa, 08.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+(15:20) first instances are starting to finish. Current runtime 21 h 40 min. I get the "pacman" R package Error again. 
+
+-------------------------------------------------------------------------
+# So, 09.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+(10:15) run complete. More than 25 h runtime.
+/Flow:/
+next step: run circtools reconstruct (FUCHS) on the wholeH_Homecage data. Run 5 instances in parallel using 3 cores each: use 15 out of 16 threads. Expected to run faster than 1746_* data.
+(10:40) launch. Good signs: the cores are used much more effectively for some reason.
+(10:42) run complete. 2 min runtime.
+
+/Project #3.2:/
+look at data with igv.
+
+-------------------------------------------------------------------------
+# Di, 11.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+extend code.
+
+-------------------------------------------------------------------------
+# Mi, 12.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+extend code.
+
+-------------------------------------------------------------------------
+# Do, 13.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+find a way to automatically assess if read data is stranded, and if so, is it first- or second-stranded (needed for FUCHS).
+/Issue:/
+the columns in ReadsPerGene.out.tab don't give super clear pattern when summed up. Not clear what columns really mean and how to establish if read data is unstranded or stranded (first/second strand). -> talk to Pierre
+
+/Flow:/
+generate mock data to test the modules that are already incorporated:
+>> zcat /mnt/schratt/mouse_control_hippocampus/SRR5715023_wholeH_Homecage_repl1.fastq.gz | awk 'NR >= 1 && NR <= 52 { print }' > ~/mockdata.fastq
+>> gzip mockdata.fastq
+Then run test on 'star':
+>> ~/script.sh ./testing/ star ~/mockdata/ mouse unpaired
+/Issue:/
+I keep getting <Permission denied> messages. Apparently it happens depending on how directories are called: ./testing vs ~/testing vs testing [SOLVED]
+
+-------------------------------------------------------------------------
+# Fr, 14.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+Now the wrapper can be called like this:
+>> ~/script.sh ./testing/ star ./mockdata/ mouse unpaired
+Only the script itself needs a full path, no idea why...
+
+/Issue:/
+I get the same error over and over:
+<awk: cmd. line:1: fatal: cannot open file `Aligned.out.sam' for reading (No such file or directory)
+mv: cannot stat 'Aligned.noS.tmp': No such file or directory>
+/Fix attempt #1:/
+maybe no alignments are found in my mockdata (i made it very small: 26 & 52 reads resp.). I'm trying to run the wrapper on the unpaired bohacek data (which should be faster than paired 1746_* read data).
+/Solution:/
+~/slurm_circtools_detect_mapping.sh had duplicate code. When removed, the error disappeared.
+
+-------------------------------------------------------------------------
+# Mo, 17.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+extend code.
+
+-------------------------------------------------------------------------
+# Di, 18.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+/Issue:/
+Chimeric.out.Junction file created from mockdata by STAR is empty.
+/Fix attempt #1:/
+running STAR on paired 1746_* read data, using default # (24) threads.
+running STAR on unpaired wholeH_Homecage read data, using default # threads.
+run complete: all generated Chimeric.out.Junction files are full! as well as all other generated files. -> mockdata might just be too small (again)
+Generated mockdata3 dataset as follows:
+>> zcat /mnt/schratt/mouse_control_hippocampus/SRR5715023_wholeH_Homecage_repl1.fastq.gz | awk 'NR >= 1 && NR <= 208 { print }' > ~/mockdata/mockdata3.fastq
+>> gzip mockdata3.fastq
+running STAR on mockdata3 unpaired data, default threads.
+run complete: file still empty.
+Generate mockdata4 dataset as follows:
+>> zcat /mnt/schratt/mouse_control_hippocampus/SRR5715023_wholeH_Homecage_repl1.fastq.gz | awk 'NR >= 1 && NR <= 624 { print }' > ~/mockdata/mockdata4.fastq
+>> gzip mockdata4.fastq
+running STAR on mockdata4, def threads.
+run complete: file still empty.
+Generate mockdata5:
+>> zcat /mnt/schratt/mouse_control_hippocampus/SRR5715023_wholeH_Homecage_repl1.fastq.gz | awk 'NR >= 1 && NR <= 2496 { print }' > ~/mockdata/mockdata5.fastq
+>> gzip mockdata5.fastq
+running STAR on mockdata5, def threads.
+run complete: Chimeric.out.Junction file is non-empty.
+
+/Flow:/
+run DCC module of script_v2.sh on mockdata5. Error message: pointed to DCC python file: <IndexError: list index out of range>
+I suspected normal data might work.
+run DCC on wholeH_Homecage unpaired data. The new version of the master wrapper makes it possible to run all samples in parallel with periodical mergings.
+
+-------------------------------------------------------------------------
+# Mi, 19.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+/Issue:/
+STAR output of paired 1746_* data has empty mate#/ subdirectories. Running STAR on 1746_D & _H again to check.
+
+/Project Salmon:/
+Salmon1: create circRNA index FASTA file using <bedtools getfasta> with inputs gene annotation FASTA & 1746_*.exon_counts.bed BED files. Add 62 and 63 bps on each end of reads respectively. (because read lengths are 125)
+Salmon2: combine the new circRNA index FASTA & the transcript index FASTA with cat. Use Salmon build index on it.
+Salmon3: use <Salmon quant> with inputs raw reads & the new Salmon index.
+
+(call Salmon with /common/salmon.../bin/salmon)
+
+/Salmon1:/
+Create unique identifier for the BED file reads (1746_*.exon_counts.bed) using the transcript name & exon coordinates. Reason: we want to discern transcript isoforms. We could have instances where start & end and even number of included exons are non-unique. That's why we need to use the exon coordinates themselves.
+Use bioawk:
+>> grep ENSMUST00000205378 1746_D/1746_D.exon_counts.bed > test.bed
+>> bioawk -c bed '{$name=$name":"$11;print}' test.bed > test_changed.bed
+Created <bed_modifier.sh> in folder /mnt/schratt/tgermade_test/
+
+/Project Wrapper:/
+/Issue:/
+STAR output still with empty mate#/ subdirectories. STAR is only run once even though I specify "paired" and the wrapper should initiate 3 rounds of STAR in that case.
+/Solution:/
+The problem was this: <if [ $format="unpaired" ]; then> in the slurm_circtools_detect_mapping.sh wrapper. It always gives TRUE, which means that it always does the first IF and never looks at the ELIF, where the paired STAR would be run. Correct version: <if [ $format = "unpaired" ]; then>
+/Flow:/
+Run STAR module on paired 1746_* data
+
+/Salmon1:/
+Run <bed_modifier.sh> on 1746_D.exon_counts.bed & 1746_H.exon_counts.bed
+Run <bedtools getfasta> on 1746_D.exon_counts_UID.bed & 1746_H.exon_counts_UID.bed
+
+-------------------------------------------------------------------------
+# Do, 20.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+Try to implement automatic evaluation of read strandedness. It worked but very messy code.
+
+-------------------------------------------------------------------------
+# Fr, 21.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+Pierre made a better version of the strandedness evaluation. Now integration and general work on DCC module.
+
+/Salmon1:/
+Integrate <bed_modifier.sh> into a general wrapper <circIndex_generator.sh> which handles all steps necessary to produce the circRNA index FASTA files (.circIndex.fa files). Next step is to combine the files with a decoy transcript index (gentrome.fa) located in dir: ~/mouse_GENCODEvM21
+
+-------------------------------------------------------------------------
+# Sa, 22.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+Options for DCC:
+-ss                   Must be enabled for stranded libraries, aka 'fr-
+                        secondstrand' [default: False]
+-N, --nonstrand       The library is non-stranded [default stranded]
+-Pi, --PE-independent
+                        Has to be specified if the paired end mates have also
+                        been mapped separately.If specified, -mt1 and -mt2
+                        must also be provided [default: False]
+
+paired un:	-Pi, -mt1, -mt2, -N
+paired fs	-Pi, -mt1, -mt2
+paired ss	-Pi, -mt1, -mt2, -ss
+
+unpaired un	-N
+unpaired fs	
+unpaired ss	-ss
+
+Running DCC on both mouse_RNAseR_hippocampus (paired) and mouse_control_hippocampus (unpaired) data.
+Run mouse_control_hippocampus (unpaired) complete. Output looks good.
+Run mouse_RNAseR_hippocampus (paired) complete. Output looks good.
+
+
+-------------------------------------------------------------------------
+# So, 23.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+/Issue:/
+After including the slurm_circtools_reconstruct.sh wrapper into the master wrapper as a function I get this ERROR:
+</bin/bash: circtools_reconstruct: command not found>
+
+-------------------------------------------------------------------------
+# Mo, 24.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+Make FUCHS module work (functions need to be exported for parallel to work).
+Simplify code for calling DCC.
+Simplify code for calling STAR.
+Run FUCHS on mouse_control_hippocampus (unpaired) data. Output looks good.
+Run FUCHS on mouse_RNAseR_hippocampus (paired) data.
+
+Update and modify circtools_issues document to send to the Dieterich lab.
+
+/Salmon:/
+Test index generation and salmon read quantification on a .circIndex.fa subset (mouse_RNAseR_hippocampus (paired) data). 
+
+concatenate 1746_D.circIndex.fa and gentrome.fa
+
+run salmon index:
+>> /common/salmon-0.14/bin/salmon index -t concatenated.fa -d ~/mouse_GENCODEvM21/decoys.txt -i combined_index -p 8 --gencode
+
+run salmon quant
+>> /common/salmon-0.14/bin/salmon quant -i combined_index -l A -p 12 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings -o transcripts_quant
+
+
+-------------------------------------------------------------------------
+# Di, 25.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+Run FUCHS on mouse_RNAseR_hippocampus (paired) data complete. Output looks good.
+
+/Salmon:/
+/Issue:/
+we get very low read assignment from salmon quant on concatenated.fa (1746_D.circIndex.fa and gentrome.fa) with decoys. Why? Try out without new salmon option --validateMappings and without decoys.
+
+/Flow:/
+
+concatenate 1746_D.circIndex.fa and transcripts.fa (dir: /reference/Mus_musculus/GENCODE/GRCm38.p5/Annotation/Genes/genes__kallistoIndex)
+>> cat 1746_D.circIndex.fa /reference/Mus_musculus/GENCODE/GRCm38.p5/Annotation/Genes/genes__kallistoIndex/transcripts.fa > concatenated_nonDecoy.fa
+
+run salmon index
+>> /common/salmon-0.14/bin/salmon index -t concatenated_nonDecoy.fa -i combined_index_nonDecoy -p 16 --gencode
+
+
+run salmon quant
+
+flexed 1746_D raw reads (& nonflexed decoy 1746_D index) --valMap:
+>> /common/salmon-0.14/bin/salmon quant -i combined_index -l A -p 12 -1 <(zcat /mnt/schratt/tgermade_test/flexbar/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/tgermade_test/flexbar/1746_D_R2.fastq.gz) --validateMappings -o transcripts_quant_flex
+## 0.0255743% of fragments were shorter than the k used to build the index (31). If this fraction is too large, consider re-building the index with a smaller k. The minimum read size found was 30.
+## Mapping rate = 10.2432%
+
+flexed 1746_D raw reads (& nonflexed nondecoy 1746_D index):
+>> /common/salmon-0.14/bin/salmon quant -i combined_index_nonDecoy -l A -p 12 -1 <(zcat /mnt/schratt/tgermade_test/flexbar/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/tgermade_test/flexbar/1746_D_R2.fastq.gz) -o transcripts_quant_flex_nonDecoy_nonValMap
+## 0.0255743% of fragments were shorter than the k used to build the index (31). If this fraction is too large, consider re-building the index with a smaller k. The minimum read size found was 30.
+## Mapping rate = 13.1254%
+
+SRR5715023_wholeH_Homecage_repl1 raw reads (& nonflexed decoy 1746_D index) --valMap:
+>> /common/salmon-0.14/bin/salmon quant -i combined_index -l A -p 12 -r <(zcat /mnt/schratt/mouse_control_hippocampus/SRR5715023_wholeH_Homecage_repl1.fastq.gz) --validateMappings -o ../mouse_control_hippocampus/transcripts_quant
+## Number of fragments discarded because they have only dovetail (discordant) mappings : 0
+## Mapping rate = 78.7299%
+
+SRR5715023_wholeH_Homecage_repl1 raw reads (& nonflexed nondecoy 1746_D index):
+>> /common/salmon-0.14/bin/salmon quant -i combined_index_nonDecoy -l A -p 12 -r <(zcat /mnt/schratt/mouse_control_hippocampus/SRR5715023_wholeH_Homecage_repl1.fastq.gz) -o ../mouse_control_hippocampus/transcripts_quant_nonDecoy_nonValMap
+## Number of fragments discarded because they have only dovetail (discordant) mappings : 0
+## Mapping rate = 87.7681%
+
+
+Allow dovetails for mouse_RNAseR_hippocampus data:
+
+flexed 1746_D raw reads (& nonflexed decoy 1746_D index) --valMap --Dove:
+>> /common/salmon-0.14/bin/salmon quant -i combined_index -l A -p 4 -1 <(zcat /mnt/schratt/tgermade_test/flexbar/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/tgermade_test/flexbar/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o transcripts_quant_flex_Dove
+## Mapping rate = 28.0008%
+
+flexed 1746_D raw reads (& nonflexed nondecoy 1746_D index) --Dove:
+>> /common/salmon-0.14/bin/salmon quant -i combined_index_nonDecoy -l A -p 12 -1 <(zcat /mnt/schratt/tgermade_test/flexbar/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/tgermade_test/flexbar/1746_D_R2.fastq.gz) --allowDovetail -o transcripts_quant_flex_nonDecoy_nonValMap_Dove
+## Mapping rate = 33.3295%
+
+
+/Project Wrapper:/
+run all circtools modules on paired mouse_RNAseR_hippocampus data:
+>> ~/circtools_master.sh ./mouse_RNAseR_hippocampus all /mnt/schratt/mouse_RNAseR_hippocampus/ mouse paired 20 ""
+
+
+-------------------------------------------------------------------------
+# Mi, 26.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+When running STAR on the mouse_RNAseR_hippocampus data i keep getting following error in the 'Log.out' file:
+
+ERROR 1746_D double mate run
+```
+WARNING: not enough space allocated for transcript. Did not process all windows for read SN863:457:HC3KNBCXX:1:1203:7844:79457
+   SOLUTION: increase alignTranscriptsPerReadNmax and re-run
+WARNING: not enough space allocated for transcript. Did not process all windows for read SN863:457:HC3KNBCXX:1:1208:12255:38412
+   SOLUTION: increase alignTranscriptsPerReadNmax and re-run
+Thread #13 end of input stream, nextChar=-1
+```
+ERROR 1746_H double mate run
+```
+WARNING: not enough space allocated for transcript. Did not process all windows for read SN863:445:HC2WJBCXX:2:2202:10009:61984
+   SOLUTION: increase alignTranscriptsPerReadNmax and re-run
+Thread #14 end of input stream, nextChar=-1
+```
+no error in: 1746_* single mate runs
+
+-------------------------------------------------------------------------
+# Do, 27.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+DCC log contains hundreds of following warnings:
+```
+2019-06-27 10:47:38,564 WARNING: circRNA end position ('chr9', '114515867') does not have mapped read counts, treated as 0
+```
+STAR Log.out for 1746_D double mate run still contains error:
+```
+WARNING: not enough space allocated for transcript. Did not process all windows for read SN863:457:HC3KNBCXX:1:1203:7844:79457
+   SOLUTION: increase alignTranscriptsPerReadNmax and re-run
+WARNING: not enough space allocated for transcript. Did not process all windows for read SN863:457:HC3KNBCXX:1:1208:12255:38412
+   SOLUTION: increase alignTranscriptsPerReadNmax and re-run
+Thread #11 end of input stream, nextChar=-1
+
+```
+
+/Salmon:/
+/Issue:/
+Run bed_index_merger.R with o_slim: no issues. 
+Error in .local(object, con, format, ...) : 
+  blocks must span entire feature, and be within its bounds
+
+-------------------------------------------------------------------------
+# Fr, 28.06.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Project Wrapper:/
+Run FUCHS on mouse_RNAseR_hippocampus data. 
+We ignore the ERRORs given by STAR (printed in Log.out files). In both samples combined (1746_D & 1746_H) only 3 reads seem to be affected.
+
+/Salmon:/
+/Issue:/
+I get the following error when trying to export a GRangesList object in 'bed_index_merger.R':
+```
+Error in .local(object, con, format, ...) : 
+  blocks must span entire feature, and be within its bounds
+```
+The format is most likely not the problem. According to 'https://rdrr.io/bioc/rtracklayer/man/BEDFile-class.html', export should have no problem with GRangesList. 
+However, the problem arises as soon as a 'blocks()'-transformed object is involved.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+>> B1 <- import("1746_D.exon_counts.slim.bed")
+>> export(B1, "test.bed")
+--> works!
+
+>> B1 <- blocks(import("1746_D.exon_counts.slim.bed"))
+>> export(asBED(B1), "test.bed")
+--> ERROR
+
+>> export(B1, "test.bed")
+--> ERROR
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+>> B1 <- import("1746_D.exon_counts.slim.bed")
+>> B2 <- import("1746_H.exon_counts.slim.bed")
+>> B <- c(B1,B2)
+>> export(B, "test.bed")
+--> works!
+
+>> B <- c(B1,asBED(blocks(B2)))
+>> export(B, "test.bed")
+--> ERROR
+
+
+--> SOLVED: some transcripts are faulty, their start nts is unequal to the start nts of their first exon (block) --> remove them
+
+-------------------------------------------------------------------------
+# Mo, 1.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+To do:
+/1:/
+integrate error filtering into 'bed_index_merger.R', to remove faulty transcript elements (no negatives in width, position)
+>> grep ",-1" 1746_H.exon_counts.bed
+/2:/
+make selection part of 'bed_index_merger.R' run in parallel
+/3:/
+generate index for mouse_RNAseR_hippocampus samples with the newly generated FUCHS files (the old ones are generated with faulty code: mate1 computed twice, no mate2 computation)
+/4:/
+generate index for mouse_control_hippocampus samples with newly generated FUCHS files --> [NO! THEYRE OUR NEGATIVE CONTROL, THERE ARE NO CIRCRNA]
+/5:/
+run salmon quant on all mouse_control_hippocampus samples --> [SAME AS ABOVE]
+
+To do:
+/2:/
+/2.1:/
+Merge '.exon_counts.bed' files for both samples in mouse_RNAseR_hippocampus using 'bed_index_merger.R'.
+
+/2.2:/
+generate '.circIndex.fa' files for mouse_RNAseR_hippocampus samples:
+>> ./circIndex_generator.sh [path to merged exon counts BED file] ./mouse_RNAseR_hippocampus 250
+
+/2.3:/
+concatenate 1746_D.circIndex.fa and gentrome.fa
+
+/2.4:/
+run salmon index:
+>> /common/salmon-0.14/bin/salmon index -t concatenated.fa -d ~/mouse_GENCODEvM21/decoys.txt -i combined_index -p 8 --gencode
+
+
+/Issue @ 2.1:/
+There are transcripts with negative length in the exon count file for the mouse_RNAseR_hippocampus D file (1746_D.exon_counts.bed)
+/Solution:/
+get rid of them. FUCHS seems to be a bit problematic. Generating extra exons of length 1 nt and compute exon widths of -1 nt
+>> awk '$11 !~ /-1/ { print }' 1746_H.exon_counts.bed > 1746_H.exon_counts_noNeg.bed
+
+-------------------------------------------------------------------------
+# Di, 02.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Salmon:/
+/1:/
+- create exon counts file lacking any negative values:
+>> grep -v ",-1" 1746_H.exon_counts.bed > 1746_H.exon_counts_noNeg.bed
+- modified 'bed_index_merger.R' to accept console input, and to talk a lot
+
+/2.1:/
+generated file '1746_combined.exon_counts.bed' (generated after filtering out negative values in '1746_H.exon_counts.bed', using 'bed_index_merger_new.R'). 
+
+Rscript bed_index_merger_new.R [1st bed file] [2nd bed file] [output name] [nr of cores (optional)]
+
+>> Rscript bed_index_merger_new.R ~/mouse_RNAseR_hippocampus/circtools/03_reconstruct/1746_D/1746_D.exon_counts.bed ~/mouse_RNAseR_hippocampus/circtools/03_reconstruct/1746_H/1746_H.exon_counts_noNeg.bed 1746_combined.exon_counts.bed 24
+
+/2.2:/
+generate index FASTA file:
+
+>> ./circIndex_generator.sh ./mouse_RNAseR_hippocampus/1746_combined.exon_counts.bed ./mouse_RNAseR_hippocampus 250
+
+/2.3:/
+concatenate 1746_combined.circIndex.fa and gentrome.fa
+
+>> cat 1746_combined.circIndex.fa ~/mouse_GENCODEvM21/gentrome.fa > 1746_concatenated.fa
+
+/2.4:/
+run salmon index:
+
+>> /common/salmon-0.14/bin/salmon index -t 1746_concatenated.fa -d ~/mouse_GENCODEvM21/decoys.txt -i combined_index -p 12 --gencode
+
+/2.5:/
+flexed 1746_D raw reads (& flexed decoy 1746_concatenated (D & H) index) --valMap --Dove:
+
+>> /common/salmon-0.14/bin/salmon quant -i combined_index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o transcripts_quant_1746_D
+## Mapping rate = 28.0431%
+
+
+-------------------------------------------------------------------------
+# Mi, 03.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Salmon:/
+Check correlation of FUCHS and Salmon quantifications.
+
+Compare transcripts from both datasets by
+1) unique concatenated name
+2) block size & start id
+
+1. create unique concatenated names for FUCHS dataset
+2. check out correlation
+3. remove all transcript names from names
+4. check out correlation
+
+--> Correlations are the same in both cases: cor = 0.1991527
+--> Very low! :(
+
+Create table in R containing counts for both mouse_RNAseR_hippocampus samples quantified by both FUCHS & Salmon
+col1: 1746_D_fuchs, col2: 1746_D_salmon, col3: 1746_H_fuchs, col4: 1746_D_salmon
+
+Do this for whole datasets (not slim)
+
+
+1. run salmon quant on 1746_H data
+
+flexed 1746_H raw reads (& flexed decoy 1746_concatenated (D & H) index) --valMap --Dove:
+
+>> /common/salmon-0.14/bin/salmon quant -i combined_index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R2.fastq.gz) --validateMappings --allowDovetail -o transcripts_quant_1746_H
+## Mapping rate = 24.8407%
+
+
+2. create table in R
+
+
+-------------------------------------------------------------------------
+# Do, 04.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+To do:
+1) make table of counts in R
+2) select sample of mouse_RNAseR run by Dieterich lab (previous version of FUCHS) and test if same results [TEST]
+3) run our sample of mouse_RNAseR_hippocampus with a salmon index not containing gentrome.fa (only circRNA index) [TEST]
+
+Done:
+1) make table of counts in R (caveat: we have 1 transcript that is listed twice in all but one sample, with differing counts)
+--> 1746_fuchs_salmon.txt
+
+To do:
+2) Salmon quant with mouse_RNAseR run by Dieterich lab
+
+/.1:/
+Merge '.exon_counts.bed' files for samples in mouse_RNAseR 'bed_index_merger.R'. --> SKIP
+
+/.2:/
+generate '.circIndex.fa' file for mouse_RNAseR sample:
+>> ./circIndex_generator.sh [path to merged exon counts BED file] ./mouse_RNAseR_dieterich 250
+
+/.3:/
+concatenate '.circIndex.fa' and gentrome.fa --> SKIP
+
+/.4:/
+run salmon index:
+>> /common/salmon-0.14/bin/salmon index -t **.circIndex.fa -i combined_index -p 8 --gencode
+
+/.5:/
+run salmon quant:
+>> /common/salmon-0.14/bin/salmon quant -i combined_index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o transcripts_quant_1746_D_dieterich
+## 
+
+
+-------------------------------------------------------------------------
+# Fr, 05.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Issue:/
+I get the following error when running circIndex_generator.sh on '1746_D_exon_chain_12.bed':
+
+< Differing number of BED fields encountered at line: 1902.  Exiting... >
+
+--> but i still get output!
+
+Number of lines per fasta index file created with circIndex_generator.sh:
+< 3802 1746_D_exon_chain_12.circIndex.fa > (NEW)
+< 47202 1746_combined.circIndex.fa > (OLD)
+This small size is not surprising, 1746_combined is samples D & H combined + gentrome.fa with decoys.. (WRONG: 1746_concatenated contains the gentrome + decoys)
+
+-------------------------------------------------------------------------
+# Di, 09.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+/Solution:/
+There are instances in the Dieterich mouse_RNAseR data that have no exon position information. When I concatenate the positions with the name to generate unique ids I get names like: "NAME::" which generate errors in script.
+--> I sort them out with a <grep -v "::">
+
+The question now is:
+####################
+Both .bed datesets (ours & dieterichs) contain errors. Which should we use? Should we use a different quantification method?
+
+
+To do:
+2) Salmon quant with mouse_RNAseR run by Dieterich lab
+
+/.1:/
+Merge '.exon_counts.bed' files for samples in mouse_RNAseR 'bed_index_merger.R' [SKIP]
+
+/.2:/
+generate '.circIndex.fa' file for mouse_RNAseR sample:
+>> ./circIndex_generator.sh /mnt/schratt/dieterich_circRNA_structures/1746_D_exon_chain_12.bed ./mouse_RNAseR_dieterich 250
+[DONE]
+
+/.3:/
+concatenate '.circIndex.fa' and gentrome.fa [SKIP]
+
+/.4:/
+run salmon index:
+>> /common/salmon-0.14/bin/salmon index -t 1746_D_exon_chain_12.circIndex.fa -i dieterich_index -p 20 --gencode
+
+/.5:/
+run salmon quant:
+>> /common/salmon-0.14/bin/salmon quant -i dieterich_index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o transcripts_quant_1746_D
+## Mapping rate = 14.3148%
+[DONE]
+
+--> bad mapping rate.. Is salmon the problem or our dataset?
+
+###################
+
+To do:
+check the mapping for our mouse_RNAseR data WITHOUT merging of index with transcripts (either gentrome.fa or transcripts.fa)
+
+/.1:/
+Merge '.exon_counts.bed' files for samples in mouse_RNAseR 'bed_index_merger.R' [SKIP]
+
+/.2:/
+generate '.circIndex.fa' file for mouse_RNAseR sample:
+>> ./circIndex_generator.sh /mnt/schratt/dieterich_circRNA_structures/1746_D_exon_chain_12.bed ./mouse_RNAseR_dieterich 250
+[SKIP]
+
+/.3:/
+concatenate '.circIndex.fa' and gentrome.fa [SKIP]
+
+/.4:/
+run salmon index:
+>> /common/salmon-0.14/bin/salmon index -t 1746_combined.circIndex.fa -i circ_index -p 20 --gencode
+
+/.5:/
+run salmon quant:
+>> /common/salmon-0.14/bin/salmon quant -i circ_index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o transcripts_quant_1746_D_circ
+## Mapping rate = 9.11606%
+[DONE]
+--> The mapping rate is lower than mapped with the a transcript index. 2 possibilities: 1) We have lots of linear RNA in the RNAseR treated dataset. 2) Something else..
+
+To do:
+Send Pierre the table of the counts for the different samples and quantification methods 1746_fuchs_salmon.txt [DONE]
+
+#############
+PLAN:
+Comparison of Dieterichs and our mouse_RNAseR data quantification
+
+make 4 plots:
+
+dieterich  ours
+ _______________
+|	|	| with transcript.fa
+|_______|_______|
+|	|	| without transcript.fa
+|_______|_______|
+
+Compare correlation of Salmon & FUCHS
+
+#############
+
+To do:
+1746_D.bed --> 1746_D.circIndex.fa --> cat / no cat --> salmon index --> quant
+
+#############
+
+# Ours w/o linear transcript
+##########################
+/.1:/
+Merge '.exon_counts.bed' files for samples in mouse_RNAseR 'bed_index_merger.R' [SKIP]
+
+/.2:/
+generate '.circIndex.fa' file for mouse_RNAseR sample:
+>> ./circIndex_generator.sh ~/mouse_RNAseR_hippocampus/circtools/03_reconstruct/1746_D/1746_D.exon_counts.bed ./mouse_RNAseR_new_wo 250
+[DONE]
+
+/.3:/
+concatenate '.circIndex.fa' and gentrome.fa [SKIP]
+
+/.4:/
+run salmon index:
+>> /common/salmon-0.14/bin/salmon index -t 1746_D.circIndex.fa -i circ_index -p 20 --gencode
+[DONE]
+
+/.5:/
+run salmon quant:
+>> /common/salmon-0.14/bin/salmon quant -i circ_index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o transcripts_quant_1746_D_circ
+## Mapping rate = 6.95583%
+[DONE]
+
+
+# Ours w linear transcript
+##########################
+/.1:/
+Merge '.exon_counts.bed' files for samples in mouse_RNAseR 'bed_index_merger.R' [SKIP]
+
+/.2:/
+generate '.circIndex.fa' file for mouse_RNAseR sample:
+>> ./circIndex_generator.sh ~/mouse_RNAseR_hippocampus/circtools/03_reconstruct/1746_D/1746_D.exon_counts.bed ./mouse_RNAseR_new_wo 250
+[DONE]
+
+/.3:/
+concatenate '.circIndex.fa' and transcripts.fa [DONE]
+>> cat 1746_D.circIndex.fa /reference/Mus_musculus/GENCODE/GRCm38.p5/Annotation/Genes/genes__kallistoIndex/transcripts.fa > concatenated.fa
+
+/.4:/
+run salmon index:
+>> /common/salmon-0.14/bin/salmon index -t concatenated.fa -i comb_index -p 20 --gencode
+[DONE]
+
+/.5:/
+run salmon quant:
+>> /common/salmon-0.14/bin/salmon quant -i comb_index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o transcripts_quant_1746_D_comb
+## Mapping rate = 29.0994%
+[DONE]
+
+
+# Dieterichs w linear transcript
+##########################
+/.1:/
+Merge '.exon_counts.bed' files for samples in mouse_RNAseR 'bed_index_merger.R' [SKIP]
+
+/.2:/
+generate '.circIndex.fa' file for mouse_RNAseR sample:
+>> ./circIndex_generator.sh /mnt/schratt/dieterich_circRNA_structures/1746_D_exon_chain_12.bed ./mouse_RNAseR_dieterich 250
+[DONE]
+
+/.3:/
+concatenate '.circIndex.fa' and transcripts.fa [DONE]
+>> cat 1746_D_exon_chain_12.circIndex.fa /reference/Mus_musculus/GENCODE/GRCm38.p5/Annotation/Genes/genes__kallistoIndex/transcripts.fa > concatenated.fa
+
+/.4:/
+run salmon index:
+>> /common/salmon-0.14/bin/salmon index -t concatenated.fa -i comb_index -p 20 --gencode
+[DONE]
+
+/.5:/
+run salmon quant:
+>> /common/salmon-0.14/bin/salmon quant -i comb_index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o transcripts_quant_1746_D_comb
+## Mapping rate = 37.2362%
+[DONE]
+
+
+-------------------------------------------------------------------------
+# Mi, 10.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Need to redo all the salmon quantifications from yesterday. The names of the Dieterich sets were messed up. Also, the names are different between the sets and counts can therefore not be compared between them.
+--> adapted the 'circIndex_generator.sh' script
+
+
+# Ours w/o linear transcript
+##########################
+/.1:/
+Merge '.exon_counts.bed' files for samples in mouse_RNAseR 'bed_index_merger.R' [SKIP]
+
+/.2:/
+generate '.circIndex.fa' file for mouse_RNAseR sample:
+>> ./circIndex_generator.sh ~/mouse_RNAseR_hippocampus/circtools/03_reconstruct/1746_D/1746_D.exon_counts.bed ./mouse_RNAseR_new_wo 250
+[DONE]
+
+/.3:/
+concatenate '.circIndex.fa' and gentrome.fa [SKIP]
+
+/.4:/
+run salmon index:
+>> /common/salmon-0.14/bin/salmon index -t 1746_D.circIndex.fa -i circ_index -p 20 --gencode
+[DONE]
+
+/.5:/
+run salmon quant:
+>> /common/salmon-0.14/bin/salmon quant -i circ_index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o transcripts_quant_1746_D_circ
+## Mapping rate = 6.95583%
+[DONE]
+
+
+##########################
+Mail to Pierre:
+##########################
+I found that the transcript names of the Dieterich bed files differ from ours. Theirs look like this:
+```
+10:105413217-105413787|0|1.0
+```
+Ours look like this:
+```
+ENSMUST00000193812
+```
+That's not really a problem since I can change the names of our transcripts to match theirs, so that we're able to compare the counts after salmon quantification.
+But for the 'transcripts.fa' the names can't be changed like that. If I understand it correctly that doesn't matter, right? Since were using the same 'transcripts.fa' file for both Dieterich's and our concatenated index. We'll just end up with 2 types of nomenclature for the concatenated quantifications. Correct?
+
+I also anticipate that we'll have trouble with the uniqueness of these names.
+Dieterich's bed file:
+```
+10    108262310    108267420    10:108262310-108267420|0|0.999804305284    17    .    108262310    108267420    255,0,0    4    78,41,66,17    0,80,2392,5093
+```
+Our bed file:
+```
+chr10    108262310    108267420    ENSMUST00000219263    25    +    108262310    108267420    0,255,0    4    1,120,64,15    0,1,2394,5095
+```
+As I mentioned above, I can change our transcript names. I can recreate this:
+```
+10:105413217-105413787
+```
+But these aren't unique of course. To make them unique we always added the exon coordinates to the name (bold). Here comes my fear: I grep-ed some transcripts of Dieterich's and our bed files and I didn't come across an instance where the exon coordinates were identical to ours (for transcripts of same name). However, I think they might still be the same transcripts since the number of isoforms (the number of found instances via grep) I found for both Dieterich's and our transcripts were the same in every case and the coordinates seem to be close most of the times (as seen in the 2 bed line examples above).
+These are the files I compared:
+1) /home/tgermade/mouse_RNAseR_hippocampus/circtools/03_reconstruct/1746_D/1746_D.exon_counts.bed
+2) /mnt/schratt/dieterich_circRNA_structures/1746_D_exon_chain_12.bed
+
+I hope I missed something that would explain the problem. What's your take on this?
+
+
+
+-------------------------------------------------------------------------
+# Do, 11.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+WRONG: Don't need to adjust the names for the different batches, since I'll compare them only with their FUCHS exon_counts.bed counterpart! The names just need to fit to FUCHS!
+
+To do:
+- run our data again, as done in the beginning
+- run Dieterich's data (to avoid name cutting caused by the | symbol)
+
+
+
+# Ours w/o linear transcript
+##########################
+/.1:/ [SKIP]
+Merge '.exon_counts.bed' files for samples in mouse_RNAseR 'bed_index_merger.R'
+
+/.2:/ [DO]
+generate '.circIndex.fa' file for mouse_RNAseR sample:
+>> ./circIndex_generator.sh ~/mouse_RNAseR_hippocampus/circtools/03_reconstruct/1746_D/1746_D.exon_counts.bed ./mouse_RNAseR_new_wo 250
+
+/.3:/ [SKIP]
+concatenate '.circIndex.fa' and linear transcript FASTA file
+
+/.4:/ [DO]
+run salmon index:
+>> /common/salmon-0.14/bin/salmon index -t 1746_D.circIndex.fa -i circ_index -p 20 --gencode
+
+/.5:/ [DO]
+run salmon quant:
+>> /common/salmon-0.14/bin/salmon quant -i circ_index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o transcripts_quant_1746_D_circ
+## Mapping rate = 6.95583%
+
+
+
+# Ours w linear transcript [SKIP]
+##########################
+
+
+
+# Dieterichs w linear transcript
+##########################
+/.1:/ [SKIP]
+Merge '.exon_counts.bed' files for samples in mouse_RNAseR 'bed_index_merger.R' 
+
+/.2:/ [DO]
+generate '.circIndex.fa' file for mouse_RNAseR sample:
+>> ./circIndex_generator.sh /mnt/schratt/dieterich_circRNA_structures/1746_D_exon_chain_12.bed ./mouse_RNAseR_dieterich 250
+
+/.3:/ [DO]
+concatenate '.circIndex.fa' and transcripts.fa
+>> cat 1746_D_exon_chain_12.circIndex.fa /reference/Mus_musculus/GENCODE/GRCm38.p5/Annotation/Genes/genes__kallistoIndex/transcripts.fa > concatenated.fa
+
+/.4:/ [DO]
+run salmon index:
+>> /common/salmon-0.14/bin/salmon index -t ../concatenated.fa -i comb_index -p 20 --gencode
+
+/.5:/ [DO]
+run salmon quant:
+>> /common/salmon-0.14/bin/salmon quant -i comb_index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o transcripts_quant_1746_D_comb
+## Mapping rate = 37.2362%
+
+
+# Dieterichs w/o linear transcript
+##########################
+/.1:/ [SKIP]
+Merge '.exon_counts.bed' files for samples in mouse_RNAseR 'bed_index_merger.R' 
+
+/.2:/ [SKIP]
+generate '.circIndex.fa' file for mouse_RNAseR sample:
+>> ./circIndex_generator.sh /mnt/schratt/dieterich_circRNA_structures/1746_D_exon_chain_12.bed ./mouse_RNAseR_dieterich 250
+
+/.3:/ [SKIP]
+concatenate '.circIndex.fa' and linear transcript FASTA file 
+
+/.4:/ [DO]
+run salmon index: 
+>> /common/salmon-0.14/bin/salmon index -t ../1746_D_exon_chain_12.circIndex.fa -i circ_index -p 20 --gencode
+
+/.5:/ [DO]
+run salmon quant:
+>> /common/salmon-0.14/bin/salmon quant -i circ_index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o transcripts_quant_1746_D_circ
+
+
+##########################
+Mail to Pierre:
+##########################
+1) This is what I was thinking: The task is this:
+
+make 4 plots:
+
+dieterich       ours
+ _______________
+|       |       | with transcript.fa
+|_______|_______|
+|       |       |  without transcript.fa
+|_______|_______|
+
+Compare correlation of Salmon vs Fuchs for each case
+
+We're never directly comparing the Dieterich data to ours, instead we're always comparing to the Fuchs bed files. Since the Salmon quantifications are based on the index made via Fuchs bed file, the nomenclature is the same.
+What I did was this:
+a) compare Dieterich exon_counts.bed to Dieterich quant.sf made with circular + linear transcript index
+b) compare Dieterich exon_counts.bed to Dieterich quant.sf made with circular transcript index
+c) compare our exon_counts.bed to our quant.sf made with circular + linear transcript index
+d) compare our exon_counts.bed to our quant.sf made with circular transcript index
+
+The correlations are surprisingly bad...
+cor( log1p(counts_salmon), log1p(counts_fuchs) ) are:
+a) -0.07801211
+b) -0.1680926
+c) 0.156882
+d) 0.1420258
+
+BUT: These values were generated with the SLIM versions of the datasets (first 1'000 lines).
+And there's still hope that I made a mistake.
+
+2) The deviations between the bed files vary, they're not constant over all transcripts. Example:
+Dieterich:
+```
+10      10733159        10746791        10:10733159-10746791|0|0.631455399061   17      .       10733159        10746791        255,0,0 3       126,103,228     0,8276,13404
+10      10733159        10782794        10:10733159-10782794|0|0.9977838219     3       .       10733159        10782794        255,0,0 5       126,169,11,125,236      0,8276,13385,13507,49399
+```
+Ours:
+```
+chr10   10733159        10746791        ENSMUST00000105560      26      -       10733159        10746791        0,255,0 5       1,245,167,125,1 0,13387,8278,1,13631
+chr10   10733159        10782794        ENSMUST00000105560      16      -       10733159        10782794        0,255,0 6       1,234,245,167,125,1     0,49401,13387,8278,1,49634
+```
+I realized that since we don't directly compare the two files or their derivatives, that's not a problem. Still, ideally they'd be identical, right?
+
+I will next run the script for the whole datasets.
+
+##########################
+
+Ran it for whole datasets:
+
+Correlations:
+a) -0.02325523
+b) -0.09416331
+c) 0.1679609
+d) 0.205908
+
+
+There are still duplicates in the datasets. Especially in Dieterichs BED file (d_fuchs).
+
+-------------------------------------------------------------------------
+# Fr, 12.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Looking at some dataset statistics (Salmon vs Fuchs)
+## a) compare Dieterich exon_counts.bed to Dieterich quant.sf made with circular + linear transcript index
+## b) compare Dieterich exon_counts.bed to Dieterich quant.sf made with circular transcript index
+## c) compare our exon_counts.bed to our quant.sf made with circular + linear transcript index
+## d) compare our exon_counts.bed to our quant.sf made with circular transcript index
+
+## a)
+######
+> length(d_w$TPM[d_w$TPM != 0])
+[1] 71300
+--> 13% of these non-cero entries overlap with Fuchs
+
+while:
+
+> length(intersect(d_w$Name, d_fuchs$Name))
+[1] 13402
+
+and: 
+
+> length(d_fuchs$Name)
+[1] 13413
+
+# how many entries intersect with Fuchs and don't have 0 counts:
+> length(na.omit(match(d_w$Name[d_w$TPM != 0], int_d_w)))
+[1] 8919
+> length(d_fuchs$Name)
+[1] 13413
+--> 66% of the Fuchs entries are found in Salmon and aren't 0
+
+Salmon with linear transcript finds ~5x as many counts as Fuchs. Salmon finds counts for 66% of the transcripts found by Fuchs. However, the correlation of the count values is very bad:
+
+> cor(log1p(counts_d_w), log1p(counts_d_fuchs))
+         Counts
+TPM -0.02325523
+
+
+Checking the other datasets:
+
+## b)
+######
+Salmon without linear transcript finds ~2/3x the counts of Fuchs (67% of the Fuchs transcripts). The correlation is still bad:
+
+> length(d_wo$TPM[d_wo$TPM != 0])
+[1] 9020
+
+# how many entries intersect with Fuchs and don't have 0 counts:
+> length(na.omit(match(d_wo$Name[d_wo$TPM != 0], int_d_wo)))
+[1] 9020
+> length(d_fuchs$Name)
+[1] 13413
+--> 67% of the Fuchs entries are found in Salmon and aren't 0
+
+> cor(log1p(counts_d_wo), log1p(counts_d_fuchs))
+         Counts
+TPM -0.09416331
+
+## c)
+######
+Salmon with linear transcript finds ~5x as many counts as Fuchs. Salmon finds counts for ~62% of the transcripts found by Fuchs.
+
+> length(o_w$TPM[o_w$TPM != 0])
+[1] 69509
+--> 13% of these non-cero entries overlap with Fuchs
+
+# how many entries intersect with Fuchs and don't have 0 counts:
+> length(na.omit(match(o_w$Name[o_w$TPM != 0], int_o_w)))
+[1] 8970
+> length(o_fuchs$Name)
+[1] 14496
+--> 62% of the Fuchs entries are found in Salmon and aren't 0
+
+> cor(log1p(counts_o_w), log1p(counts_o_fuchs))
+       Counts
+TPM 0.1679609
+
+## d)
+######
+Salmon without linear transcript finds ~7/8x the counts of Fuchs (88% of the Fuchs transcripts).
+
+> length(o_wo$TPM[o_wo$TPM != 0])
+[1] 12713
+
+# how many entries intersect with Fuchs and don't have 0 counts:
+> length(na.omit(match(o_wo$Name[o_wo$TPM != 0], int_o_wo)))
+[1] 12713
+> length(o_fuchs$Name)
+[1] 14496
+--> 88% of the Fuchs entries are found in Salmon and aren't 0
+
+> cor(log1p(counts_o_wo), log1p(counts_o_fuchs))
+      Counts
+TPM 0.205908
+
+
+
+######
+Generated an R markdown document '1746_dieterich_vs_our.Rmd', located in '~/Documents/R_stuff/'
+######
+
+
+ NEW DATASET:
+ _______________________________________
+| 					|
+| ribozero mouse hippocampus 		|
+|	unpaired reads			|
+|	containing: 			|
+|		* circular transcripts	|
+|		* linear transcripts    |
+|_______________________________________|
+
+
+To do:
+- Copy the new dataset to new folder [DONE]
+- Run STAR on ribozero
+- Run DCC on ribozero BUT: min 1 read in 1 sample (trying to detect as much as possible)
+
+>> ~/circtools_master.sh ~/mouse_ribozero_hippocampus star /mnt/schratt/mouse_ribozero_hippocampus/ mouse unpaired 24
+
+
+-------------------------------------------------------------------------
+# Sa, 13.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+STAR run successful.
+Now run DCC on ribozero: min 1 read in 1 sample.
+
+Changed this part in 'circtools_master.sh':
+circtools detect  @samplesheet \
+                  -D \
+                  -an $gene_annotation \
+                  -F \
+                  -Nr 1 1 \
+                  -fg \
+                  -G \
+                  -A $genome_reference \
+                  -O ./output \
+                  -T $procs \
+                  -B @bam_files.txt \
+                  $paired_option $strand_option
+From < -Nr 2 1 > to < -Nr 1 1 >
+
+Run DCC < -Nr 1 1 >
+
+>> ~/circtools_master.sh ~/mouse_ribozero_hippocampus dcc /mnt/schratt/mouse_ribozero_hippocampus/ mouse unpaired 24
+
+-------------------------------------------------------------------------
+# So, 14.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+DCC run successful.
+
+-------------------------------------------------------------------------
+# Mo, 15.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+work on the hybrid quantification
+
+-------------------------------------------------------------------------
+# Di, 16.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+To do:
+1) (R) get 'bed' matches for each element in 'dcc'
+2) run salmon on ribozero data
+3) (R) concatenate names of matches & find equivalents in 'salmon' IF there are multiple matches
+4) (R) get the relative counts for each pair from 'salmon', divide the 'dcc' counts accordingly to get the absolute isoform counts
+5) (R) make list of: single matches straight from 'bed', multi matches from 'salmon' with adjusted counts
+6) FIN
+
+
+1) DONE (thanks to Pierre, I got stuck)
+
+2) 
+(Why do everything again? I found duplicates in the 1746 combined bed file. I suspect that after making the changes in 'bed_index_merger.R', getting rid of duplicates, I didn't rerun the script)
+
+/.1:/ [DO]
+Merge '.exon_counts.bed' files for samples in mouse_RNAseR 'bed_index_merger.R' 
+>> Rscript bed_index_merger.R ~/mouse_RNAseR_hippocampus/circtools/03_reconstruct/1746_D/1746_D.exon_counts.bed ~/mouse_RNAseR_hippocampus/circtools/03_reconstruct/1746_H/1746_H.exon_counts_noNeg.bed 1746_combined.exon_counts.bed 24
+
+/.2:/ [DO]
+generate '.circIndex.fa' file for mouse_RNAseR sample:
+>> ./circIndex_generator.sh ./mouse_RNAseR_hippocampus/1746_combined.exon_counts.bed ./mouse_RNAseR_hippocampus 250
+
+/.3:/ [DO]
+concatenate '.circIndex.fa' and linear transcript .fa
+>> cat 1746_combined.exon_counts.circIndex.fa ~/mouse_GENCODEvM21/gentrome.fa > 1746_concatenated.fa
+
+/.4:/ [DO]
+run salmon index (use concatenated .fa file, including gentrome.fa):
+>> cd mouse_ribozero_hippocampus/
+>> /common/salmon-0.14/bin/salmon index -t ../mouse_RNAseR_hippocampus/1746_concatenated.fa -d ~/mouse_GENCODEvM21/decoys.txt -i comb_index_1746 -p 20 --gencode
+
+/.5a:/ [DO]
+run salmon quant:
+>> /common/salmon-0.14/bin/salmon quant -i comb_index_1746 -l A -p 20 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641435.trimmed.fastq.gz) --validateMappings -o transcripts_quant_SRX1641435_1746
+## Mapping rate = 64.6792%
+
+/.5b:/ [DO]
+run salmon quant:
+>> /common/salmon-0.14/bin/salmon quant -i comb_index_1746 -l A -p 20 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641436.trimmed.fastq.gz) --validateMappings -o transcripts_quant_SRX1641436_1746
+## Mapping rate = 65.4981%
+
+
+New plans:
+- compare our RNAseR treated data quantification (1746_combined.exon_counts.bed) to the public circRNA database ('circbase.org'):
+* how many transcripts match?
+* compare the counts we get between matching and non-matching transcripts (score plots)
+
+- talk with Silvia:
+* how do miRNA bind circRNA? with or without AGO?
+* which sequence motifs improve binding, and which only improve function? (we're only interested in the binding)
+
+-------------------------------------------------------------------------
+# Mi, 17.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Comparisons to circbase:
+
+/Issue:/
+the two datasets differ in their coordinate system: one is 0 the other 1 based
+--> check via IGV which one fits to our reference genome
+
+
+/Issue:/
+'circIndex_generator.sh' had an error: didn't generate correct sequences (incorrect overlaps)
+--> revised and corrected 'circIndex_generator.sh'
+
+To do:
+- check the output of the revised 'circIndex_generator.sh':
+* look at (+) stranded circbase transcript: how are the positions in the 1746_getfasta.tmp file? 
+The (-) stranded transcripts seem to be shifted by -1 nt (start & end), are the (+) stranded ones shifted by +1 nt?
+- rerun all the salmon stuff & compare it to fuchs ('salmon_fuchs_correlation.R')
+
+
+-------------------------------------------------------------------------
+# Do, 18.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+mouse_mm9_circRNAs_putative_spliced_sequence.fa (circbase fasta):
+
+    start|------------------------|end
+
+1746_getfasta.tmp (bed --(bedtools getfasta)--> fa ; without sequence manipulation), (+) transcript:
+
+      start+1|----------------------|end+1
+
+1746_getfasta.tmp (bed --(bedtools getfasta)--> fa ; without sequence manipulation), (-) transcript:
+
+ start-1|----------------------|end-1
+
+
+code to check:
+>> grep [start seq of circbase] 1746_getfasta.tmp
+--> G[start seq of circbase]GTGGAGCTAGAGAGTGACCTTGCCCAATGGGA
+
+>> grep [start seq of circbase] 1746_getfasta.tmp | grep [end seq of circbase]
+--> no result
+
+>> grep [start seq of circbase] 1746_getfasta.tmp | grep [end seq of circbase]-1
+--> G[start seq of circbase]GTGGAGCTAGAG[end seq of circbase]-1
+
+
+
+'circIndex_generator.sh':
+
+bioawk -c bed '{$start=$start-1; $end=$end; $thickstart=$thickstart-1; $thickend=$thickend; print}' $out_dir/$name_UID.tmp > $out_dir/$name_U
+ID
+
+* $start-1 fixes the $start for the (+) & the $end of the (-) transcripts
+* no change to $end has any impact on the final fasta sequence...
+(even $end=$end+100 !!)
+
+##########################
+Pierre comment:
+##########################
+what getfasta does is probably:
+1) get start position
+2) add the start position of the first exon (typically 0)
+3) grab the sequence for the length of the first exon
+4) add the start position of the second exon
+... etc.
+So that the end coordinate isn't effectively used - everything is
+relative to the start.
+##########################
+
+-------------------------------------------------------------------------
+# Fr, 19.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+'circIndex_generator.sh':
+Fix shifts in transcript coordinates in our bed files ('1746_combined.exon_counts.bed')
+
+* not all transcripts start with 1 nt exon 
+Exons of these transcripts look like this:
+
+uncorrected:	start|------------------------|end - - - - |----------|
+corrected: 	start|----------------------|end-1 - - - - |----------|
+
+Examples:
+chr19:57751635-57777945, ENSMUST00000077282:90,77,156,60:0,1592,3828,26251
+chr10:90914697-90948672, ENSMUST00000182966:71,127,70,10,85,136:0,6601,8836,25869,26731,33840
+chr10:90914697-90923602, ENSMUST00000182966:71,127,70:0,6601,8836
+chr10:90069473-90077142, ENSMUST00000099368:71,100,112,165:0,1597,4508,7505
+chr6:31432940-31468343, ENSMUST00000147614:192,76,211:0,16558,35193
+
+
+Delete all instances of 1-nt-exon bug
+if $11[1] == 1 :
+a[1]=a[2]
+delete a[2]
+delete b[2]
+
+
+-------------------------------------------------------------------------
+# Di, 23.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Ran 'circIndex_generator.sh' with 1-nt-exon removal.
+/Issue:/
+There are instances where the first exon size is 1, but the second exon doesn't start at position 1:
+
+before correction:
+size: 1,172,159		start: 0,3038,8295
+after correction: 
+size: 174,161		start: 0,8294
+
+With our current code we discard an exon.
+
+
+/Solution Possibilities:/
+
+A) get rid of 1 nt:
+start: 13648539 	size: 172,159		start: 3038,8295
+--> the transcript wouldn't start at 0 anymore!
+
+B) get rid of 1 nt & adapt coordinates:
+start: (13648539+3038) 	size: 172,159		start: 0,(8295-3038)
+--> large interference!
+
+C) keep unchanged:
+start: 13648540		size: 1,172,159		start: 0,3038,8295
+--> we'd have a 1 nt exon
+
+
+
+Removal of 1 nt exon bug from our FUCHS bed files
+
+I've found a new type of sequence in our FUCHS bed files.
+Last time we discussed our sequences, we decided to get rid of the 1 nt exons that were mysteriously added. The code is as follows:
+```
+if(a[1]==1){
+        a[1]=a[2]
+        delete a[2]
+        delete b[2]
+        $10=$10-1
+}
+```
+Where a is the exon size array, b is the exon start array and $10 is the exon number column.
+With this we can alter usual transcripts like this (includes all corrections):
+
+Before:
+exon nr    size                start
+3            1,130,1        0,1,13007
+After:
+2            132,3           0,13006
+
+But there is a subset of transcripts that looks like this:
+Before:
+3            1,172,159    0,3038,8295
+After:
+2            174,161       0,8294
+
+I've included a picture of such a sequence (schratt_fuchs_seq_error.png).
+~25% of all transcripts seem to look like the second case, where the bugged 1 nt exon isn't continuous with the first real exon. I've included an html document to show how I came to that conclusion (bed_coordinates_test.html).
+
+What should we do about it?
+The possibilities I see:
+
+A) keep unchanged:
+transcript start: 13648540	size: 1,172,159		start: 0,3038,8295
+--> we'd have a 1 nt exon
+
+B) get rid of 1 nt:
+transcript start: 13648539	size: 172,159		start: 3038,8295
+--> the transcript wouldn't start at 0 anymore!
+
+C) get rid of 1 nt & adapt coordinates:
+transcript start: (13648539+3038)     size: 172,159	start: 0,(8295-3038)
+--> large interference!
+
+
+-------------------------------------------------------------------------
+# Fr, 26.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+- Run FUCHS on RiboZero data
+>> ~/circtools_master.sh ~/mouse_ribozero_hippocampus fuchs /mnt/schratt/mouse_ribozero_hippocampus/ mouse unpaired 24
+
+/Issue:/
+We get an empty exon_counts.bed file output.
+Looking at max transcript numbers in the DCC CircRNACount files:
+
+>> awk '{print $4}' CircRNACount | sort -n | tail -3
+11
+13
+193
+>> awk '{print $5}' CircRNACount | sort -n | tail -3
+11
+13
+173
+column 4 is SRX1641435.trimmed.Chimeric.out.junction, column 5 is SRX1641436.trimmed.Chimeric.out.junction
+--> are these low counts the reason we get no FUCHS results?
+
+This is the command I used:
+>> ~/circtools_master.sh ~/mouse_ribozero_hippocampus fuchs /mnt/schratt/mouse_ribozero_hippocampus/ mouse unpaired 24
+( ./circtools_master.sh [work dir] [parts to run] [read files dir] [organism] [form of read data] [thread number] [batch name (optional)] )
+
+
+-------------------------------------------------------------------------
+# Mo, 29.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Checking 1 nt exon occurrence in Dieterich bed files:
+
+>> bioawk -c bed '{print $blocksizes}' 1746_D_exon_chain_12.bed | grep '^1,' | wc -l
+>> 0
+>> bioawk -c bed '{print $blocksizes}' 1746_H_exon_chain_12.bed | grep '^1,' | wc -l
+>> 0
+>> wc -l 1746_D_exon_chain_12.bed 
+>> 13503
+
+
+Checking 1 nt exon occurrence in our bed files:
+
+>> bioawk -c bed '{print $blocksizes}' ../tgermade_test/salmon/mouse_RNAseR_hippocampus/1746_combined.exon_counts.bed | grep '^1,' | wc -l
+>> 16079
+>> wc -l ../tgermade_test/salmon/mouse_RNAseR_hippocampus/1746_combined.exon_counts.bed
+>> 16149
+
+
+Smallest blocksizes in Dieterich file:
+
+>> bioawk -c bed '{print $blocksizes}' 1746_D_exon_chain_12.bed | grep -v '^$' | sort -n | head -3
+>> 14,801
+>> 16,102,82,96,101,149
+>> 16,202,105,63
+
+
+Checking 1 nt exon occurrence in CircBase file ($11 == $blocksizes):
+
+>> awk '{print $11}' circbase_mouse_mm10.bed | grep '^1,' | wc -l
+>> 0
+
+
+Smallest blocksizes in CircBase file:
+
+>> awk '{print $11}' circbase_mouse_mm10.bed | grep -v '^$' | sort -n | head -3
+>> 23,168,53,
+>> 25,65,
+>> 25,83,
+
+
+Checking 1 nt exon occurrence in bam file:
+
+>> bedtools bamtobed -bed12 -i 1746_D_merged.bam > /mnt/ins/1746_D_merged.bed
+>> awk '{print $11}' 1746_D_merged.bed | grep '^1,' | wc -l
+>> 0
+>> awk '{print $11}' 1746_D_merged.bed | grep '^1$' | wc -l
+>> 0
+
+
+Smallest blocksizes in bam file:
+
+>> awk '{print $11}' 1746_D_merged.bed | grep -v '^$' | sort -n | head
+>> 3
+>> 7
+>> 8
+>> 8
+>> 8
+>> ...
+
+
+No evidence for any 1 nt exons. Go with option C):
+get rid of 1 nt & adapt coordinates:
+transcript start: (13648539+3038)     size: 172,159	start: 0,(8295-3038)
+--> large interference!
+
+
+-------------------------------------------------------------------------
+# Di, 30.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+FUCHS parameters
+
+Circle has to have at least <r> reads to be analysed.
+-r 2
+--> We do have elements with > 2 reads
+
+MAPQ cutoff, only reads passing this threshold will be written to circle BAM file.
+-q 2
+
+>> samtools view Aligned.noS.bam | bioawk -c sam '{print $mapq}' | sort -n | tail
+>> 255
+>> 255
+>> 255
+>> 255
+>> 255
+--> We do have elements with mapq scores > 2
+
+##########################################
+More ERRORS found! 1 nt at END of transcripts
+##########################################
+
+-------------------------------------------------------------------------
+# Mi, 31.07.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Updated coordinates in 'circIndex_generator.sh'. Now the coordinates look right but I get error:
+
+ERROR
+--------------------------------------------------------------------
+Input error: found interval with block-counts not matching starts/sizes on line.
+--------------------------------------------------------------------
+
+
+-------------------------------------------------------------------------
+# Mi, 07.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Checking 1 nt exon at end occurrence in Dieterich bed files:
+
+>> bioawk -c bed '{print $blocksizes}' 1746_D_exon_chain_12.bed | grep ',1$' | wc -l
+>> 0
+>> bioawk -c bed '{print $blocksizes}' 1746_H_exon_chain_12.bed | grep ',1$' | wc -l
+>> 0
+
+
+Checking 1 nt exon at end occurrence in our bed files:
+
+>> bioawk -c bed '{print $blocksizes}' ../tgermade_test/salmon/mouse_RNAseR_hippocampus/1746_combined.exon_counts.bed | grep ',1$' | wc -l
+>> 9412
+>> wc -l ../tgermade_test/salmon/mouse_RNAseR_hippocampus/1746_combined.exon_counts.bed
+>> 16149
+
+
+Checking 1 nt exon at end occurrence in CircBase file ($11 == $blocksizes):
+
+>> awk '{print $11}' circbase_mouse_mm10.bed | grep ',$' | wc -l
+>> 1903
+>> awk '{print $11}' circbase_mouse_mm10.bed | wc -l
+>> 1903
+--> all blocksizes end with comma
+
+>> awk '{print $11}' circbase_mouse_mm10.bed | grep ',1,$' | wc -l
+>> 0
+
+################################
+--> get rid of 1 nt exons at end
+################################
+added this code to 'circIndex_generator.sh':
+
+# get rid of 1 nt exons at end
+if(a[$10]==1){
+	delete a[$10]
+	$10=$10-1
+	delete b[$10]
+}
+
+
+
+ERROR
+--------------------------------------------------------------------
+Input error: found interval with block-counts not matching starts/sizes on line.
+--------------------------------------------------------------------
+--> Tested if transcript end coordinates are off after coordinate modification
+--> NEGATIVE, coordinates are right
+
+--> exon counts seem correct as well
+
+
+R:
+
+> b_after <- import("1746_combined.exon_counts_UID.bed")
+Warning message:
+In ans[] <- x :
+  number of items to replace is not a multiple of replacement length
+
+--> ERROR, but data is still loaded, no NAs introduced
+
+
+
+-------------------------------------------------------------------------
+# Do, 08.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+#################################################
+'circIndex_generator.sh': Change transcript names!
+(atm still using coordinates before modification)
+#################################################
+
+
+'circIndex_generator.sh': adjusted transcript ends
+
+## adjust transcript end coordinates
+$3=$2+b[$10]+a[$10]+1
+$8=$3
+
+(I add +1 at end because overall:
+a=a+2
+b=b-1
+--> +1
+)
+
+
+
+line 185 of '1746_combined.exon_counts_UID.bed' gives the first error:
+
+--------------------------------------------------------------------
+Input error: found interval with block-counts not matching starts/sizes on line.
+--------------------------------------------------------------------
+(found out via: bedtools getfasta using subsections of bed file (head -185))
+
+>> sed '185q;d' 1746_combined.exon_counts_UID.bed.tmp
+chr19 57751634 57777945 ENSMUST00000077282:90,77,156,60:0,1592,3828,26251 7 + 57751634 57777945 0,255,0 4 90,77,156,60 *0,1592,3828,26251*
+
+>> sed '185q;d' 1746_combined.exon_counts_UID.bed
+chr19 57751633 57777945 ENSMUST00000077282:90,77,156,60:0,1592,3828,26251 7 + 57751633 57777945 0,255,0 4 92,79,158,62 *0,3827,26250*
+
+--> we have 4 exons but we delete 2nd blockstart coordinate, even though there is no 1 nt exon bug! (blocksizes are right though)
+
+
+'circIndex_generator.sh': changed code
+
+for(i in b){
+	if(i==1){
+		b2=b[i]
+	## skip exon nr 2 if it was removed
+	} else if(i==2 && length(a[2])==0){
+		continue
+	} else {
+		b2=b2 ","; b2=b2 b[i]-1
+		}
+	}
+
+--> ERROR is avoided
+
+>> sed '185q;d' 1746_combined.exon_counts_UID.bed.tmp
+chr19 57751634 57777945 ENSMUST00000077282:90,77,156,60:0,1592,3828,26251 7 + 57751634 57777945 0,255,0 4 90,77,156,60 *0,1592,3828,26251*
+
+>> sed '185q;d' 1746_combined.exon_counts_UID.bed
+chr19 57751633 57777945 ENSMUST00000077282:90,77,156,60:0,1592,3828,26251 7 + 57751633 57777945 0,255,0 4 92,79,158,62 *0,1591,3827,26250*
+
+
+'circIndex_generator.sh': Changed transcript names
+
+
+
+
+Tasks (see log_2.txt)
+#####
+- Salmon based on our RNAseR FUCHS bedfile w/o gentrome
+- Salmon based on our RNAseR FUCHS bedfile + gentrome
+- Salmon based on Dieterichs RNAseR FUCHS bedfile w/o gentrome
+- Salmon based on Dieterichs RNAseR FUCHS bedfile + gentrome
+- Hybrid method
+
+
+/mnt/schratt/tgermade_test/salmon/:
+
+
+mouse_hippocampus_rnaser_our/
+	1746_D_H.exon_counts.bed
+	1746_D_H.circIndex.fa
+	gentrome
+		concat.fa
+		concat_no_decoy.fa
+		index
+		index_no_decoy
+		quant [H/D/valMap/no_valMap]
+	no_gentrome
+		index
+		quant [H/D/valMap/no_valMap]
+mouse_hippocampus_rnaser_dieterich/
+	1746_D_H.dieterich.exon_counts.bed
+	1746_D_H.dieterich.circIndex.fa
+	gentrome
+		concat.fa
+		concat_no_decoy.fa
+		index
+		index_no_decoy
+		quant [H/D/valMap/no_valMap]
+	no_gentrome
+		index
+		quant [H/D/valMap/no_valMap]
+mouse_hippocampus_ribozero/
+	gentrome
+		quant [s1/s2/our/dieterich/valMap/no_valMap]
+	no_gentrome
+		quant [s1/s2/our/dieterich/valMap/no_valMap]
+
+
+/1/: 
+Merge '.exon_counts.bed' files for samples in common batch using 'bed_index_merger.R':
+Our:
+####
+>> Rscript ../bed_index_merger.R ~/mouse_RNAseR_hippocampus/circtools/03_reconstruct/1746_D/1746_D.exon_counts.bed ~/mouse_RNAseR_hippocampus/circtools/03_reconstruct/1746_H/1746_H.exon_counts_noNeg.bed 1746_D_H.exon_counts.bed 24
+Dieterich:
+##########
+>> Rscript ../bed_index_merger.R /mnt/schratt/dieterich_circRNA_structures/1746_D_exon_chain_12.bed /mnt/schratt/dieterich_circRNA_structures/1746_H_exon_chain_12.bed 1746_D_H.dieterich.exon_counts.bed 24
+
+/2/: 
+Generate '.circIndex.fa' file:
+Our:
+####
+>> ../circIndex_generator.sh ./1746_D_H.exon_counts.bed ./ 250
+Dieterich:
+##########
+>> ../circIndex_generator.sh ./1746_D_H.dieterich.exon_counts.bed ./ 250
+
+/3/: 
+Concatenate '.circIndex.fa' and linear transcript .fa:
+Our (gentrome):
+###############
+>> cat ./1746_D_H.circIndex.fa ~/mouse_GENCODEvM21/gentrome.fa > gentrome/concat.fa
+>> cat ./1746_D_H.circIndex.fa /reference/Mus_musculus/GENCODE/GRCm38.p5/Annotation/Genes/genes__kallistoIndex/transcripts.fa > gentrome/concat_no_decoy.fa
+Dieterich (gentrome):
+#####################
+>> cat ./1746_D_H.dieterich.circIndex.fa ~/mouse_GENCODEvM21/gentrome.fa > gentrome/concat.fa
+>> cat ./1746_D_H.dieterich.circIndex.fa /reference/Mus_musculus/GENCODE/GRCm38.p5/Annotation/Genes/genes__kallistoIndex/transcripts.fa > gentrome/concat_no_decoy.fa
+
+/4/: 
+Run salmon index (use concatenated .fa file, including gentrome.fa):
+Our (gentrome):
+###############
+>> cd mouse_hippocampus_rnaser_our/gentrome
+>> /common/salmon-0.14/bin/salmon index -t ./concat.fa -d ~/mouse_GENCODEvM21/decoys.txt -i index -p 20 --gencode
+>> /common/salmon-0.14/bin/salmon index -t ./concat_no_decoy.fa -i index_no_decoy -p 20 --gencode
+Dieterich (gentrome):
+#####################
+>> cd mouse_hippocampus_rnaser_dieterich/gentrome
+>> /common/salmon-0.14/bin/salmon index -t ./concat.fa -d ~/mouse_GENCODEvM21/decoys.txt -i index -p 20 --gencode
+>> /common/salmon-0.14/bin/salmon index -t ./concat_no_decoy.fa -i index_no_decoy -p 20 --gencode
+
+Our (no_gentrome):
+#################
+>> cd mouse_hippocampus_rnaser_our/no_gentrome
+>> /common/salmon-0.14/bin/salmon index -t ../1746_D_H.circIndex.fa -i index -p 20 --gencode
+Dieterich (no_gentrome):
+#######################
+>> cd mouse_hippocampus_rnaser_dieterich/no_gentrome
+>> /common/salmon-0.14/bin/salmon index -t ../1746_D_H.dieterich.circIndex.fa -i index -p 20 --gencode
+
+
+/5/: 
+Run salmon quant (for each sample in batch):
+Our (gentrome, valMap):
+###############
+>> cd mouse_hippocampus_rnaser_our/gentrome
+>> /common/salmon-0.14/bin/salmon quant -i index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o quant_D_valMap
+>> /common/salmon-0.14/bin/salmon quant -i index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R2.fastq.gz) --validateMappings --allowDovetail -o quant_H_valMap
+Dieterich (gentrome, valMap):
+#######################
+>> cd mouse_hippocampus_rnaser_dieterich/gentrome
+>> /common/salmon-0.14/bin/salmon quant -i index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o quant_D_valMap
+>> /common/salmon-0.14/bin/salmon quant -i index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R2.fastq.gz) --validateMappings --allowDovetail -o quant_H_valMap
+
+Our (no_gentrome, valMap):
+#################
+>> cd mouse_hippocampus_rnaser_our/no_gentrome
+>> /common/salmon-0.14/bin/salmon quant -i index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o quant_D_valMap
+>> /common/salmon-0.14/bin/salmon quant -i index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R2.fastq.gz) --validateMappings --allowDovetail -o quant_H_valMap
+Dieterich (no_gentrome, valMap):
+#######################
+>> cd mouse_hippocampus_rnaser_dieterich/no_gentrome
+>> /common/salmon-0.14/bin/salmon quant -i index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --validateMappings --allowDovetail -o quant_D_valMap
+>> /common/salmon-0.14/bin/salmon quant -i index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R2.fastq.gz) --validateMappings --allowDovetail -o quant_H_valMap
+
+everything again but without '--validateMappings' & with '-o quant_D_no_valMap' / '-o quant_H_no_valMap'
+- Our (gentrome, no_valMap)
+- Dieterich (gentrome, no_valMap)
+- Our (no_gentrome, no_valMap)
+- Dieterich (no_gentrome, no_valMap)
+
+Our (gentrome, no_valMap):
+###############
+>> cd mouse_hippocampus_rnaser_our/gentrome
+>> /common/salmon-0.14/bin/salmon quant -i index_no_decoy -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --allowDovetail -o quant_D_no_valMap
+>> /common/salmon-0.14/bin/salmon quant -i index_no_decoy -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R2.fastq.gz) --allowDovetail -o quant_H_no_valMap
+Dieterich (gentrome, no_valMap):
+#######################
+>> cd mouse_hippocampus_rnaser_dieterich/gentrome
+>> /common/salmon-0.14/bin/salmon quant -i index_no_decoy -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --allowDovetail -o quant_D_no_valMap
+>> /common/salmon-0.14/bin/salmon quant -i index_no_decoy -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R2.fastq.gz) --allowDovetail -o quant_H_no_valMap
+
+Our (no_gentrome, no_valMap):
+#################
+>> cd mouse_hippocampus_rnaser_our/no_gentrome
+>> /common/salmon-0.14/bin/salmon quant -i index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --allowDovetail -o quant_D_no_valMap
+>> /common/salmon-0.14/bin/salmon quant -i index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R2.fastq.gz) --allowDovetail -o quant_H_no_valMap
+Dieterich (no_gentrome, no_valMap):
+#######################
+>> cd mouse_hippocampus_rnaser_dieterich/no_gentrome
+>> /common/salmon-0.14/bin/salmon quant -i index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_D_R2.fastq.gz) --allowDovetail -o quant_D_no_valMap
+>> /common/salmon-0.14/bin/salmon quant -i index -l A -p 20 -1 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R1.fastq.gz) -2 <(zcat /mnt/schratt/mouse_RNAseR_hippocampus/1746_H_R2.fastq.gz) --allowDovetail -o quant_H_no_valMap
+
+To Do:
+- test if 'circIndex_generator.sh' also works for Dieterich data!
+	compare to reference sequences
+	comment-out rm commands & bedtools getfasta
+
+
+-------------------------------------------------------------------------
+# Fr, 09.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+'bed_index_merger.R':
+* Finding mismatches btw ends of transcripts & ends of outermost exons (blocks) ...
+Warning messages:
+1: In min(start(x)) : no non-missing arguments to min; returning Inf
+2: In max(end(x)) : no non-missing arguments to max; returning -Inf
+
+--> means we have at least 1 instance where we apply min/max to a length 0 vector. Don't get the error when working on slim version of bed files. It still continues computation after error.
+
+R:
+> b1 <- import("1746_D_exon_chain_12.bed")
+> exons <- blocks(b1)
+> len <- lapply( exons, function(x) length(start(x)) )
+> which(len==0)
+13:45956455-45956575|1|1.0  2:70786877-70786995|1|1.0 
+                      1903                       8708
+
+--> 2 instances in dieterich D sample that have no block information
+
+> sel <- unlist(lapply( b1$blocks, function(x) length(x)==0 ))
+> b1[sel]
+GRanges object with 2 ranges and 5 metadata columns:
+      seqnames            ranges strand |                       name     score     itemRgb
+         <Rle>         <IRanges>  <Rle> |                <character> <numeric> <character>
+  [1]       13 45956456-45956575      * | 13:45956455-45956575|1|1.0         0     #FF0000
+  [2]        2 70786878-70786995      * |  2:70786877-70786995|1|1.0         0     #FF0000
+                  thick        blocks
+              <IRanges> <IRangesList>
+  [1] 45956456-45956575              
+  [2] 70786878-70786995              
+  -------
+  seqinfo: 21 sequences from an unspecified genome; no seqlengths
+
+
+
+--> check transcripts with empty blocks in igv 
+- - - - - - - - - - - - - - - - - -
+chr13:45956456-45956575
+
+13:45956455-45956575|1|1.0
+chr13:45956456-45956575
+Score = 0.0
+- - - - - - - - - - - - - - - - - -
+chr2:70786878-70786995
+
+2:70786877-70786995|1|1.0
+chr2:70786878-70786995
+Score = 0.0
+- - - - - - - - - - - - - - - - - -
+
+Normal transcripts:
+- - - - - - - - - - - - - - - - - -
+chr2:70786878-70786995
+
+2:70786877-70786995|0|1.0
+chr2:70786878-70786995
+Score = 1380.0
+--------------
+Exon number: 1
+chr2:70786878-70786995
+- - - - - - - - - - - - - - - - - -
+
+
+-------------------------------------------------------------------------
+# Mo, 12.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+'bed_index_merger.R' analysis (nr of transcripts/lines):
+
+#our
+input1:	14'702
+input2: 10'305
+--------------
+OUT: 	16'149
+
+#dieterich
+input1: 13'503
+input2: 10'433
+--------------
+OUT: 	6'444
+
+( input1 + input2 ) - identical transcripts based on threshold = non-identical
+( 23'936 ) - 17'472 = 6'464
+
+non-identical - output = transcripts not accounted for
+6'464 - 6'444 = 20
+
+2 transcripts get removed because of lacking exon coordinates
+transcripts not accounted for = 18
+
+--> we lose 18 transcripts without any apparent reason why. This number is low, therefore acceptable
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+
+proceed with the task list setup on ### Do, 08.08.19 ###
+/1/ 			done
+/2/ 			done
+/3/ 			done
+/4/ (gentrome) 		done
+/4/ (no_gentrome) 	done
+/5/ (gentrome, valMap) 	done
+/5/ (no_gentrome, valMap) done
+/5/ (gentrome, no_valMap) done
+/5/ (no_gentrome, no_valMap) done
+
+
+# valMap
+## gentrome
+/5/ our, D, gentrome, valMap:
+>> Mapping rate = 28.8227%
+/5/ our, H, gentrome, valMap:
+>> Mapping rate = 25.5398%
+/5/ dieterich, D, gentrome, valMap:
+>> Mapping rate = 28.431%
+/5/ dieterich, H, gentrome, valMap:
+>> Mapping rate = 25.1548%
+## no_gentrome
+/5/ our, D, no_gentrome, valMap:
+>> Mapping rate = 8.56666%
+/5/ our, H, no_gentrome, valMap:
+>> Mapping rate = 7.06614%
+/5/ dieterich, D, no_gentrome, valMap:
+>> Mapping rate = 8.15445%
+/5/ dieterich, H, no_gentrome, valMap:
+>> Mapping rate = 6.66526%
+# no_valMap
+## gentrome
+/5/ our, D, gentrome, no_valMap:
+>> Mapping rate = 33.408%
+/5/ our, H, gentrome, no_valMap:
+>> Mapping rate = 33.9217%
+/5/ dieterich, D, gentrome, no_valMap:
+>> Mapping rate = 32.6262%
+/5/ dieterich, H, gentrome, no_valMap:
+>> Mapping rate = 33.2005%
+## no_gentrome
+/5/ our, D, no_gentrome, no_valMap:
+>> Mapping rate = 10.0771%
+/5/ our, H, no_gentrome, no_valMap:
+>> Mapping rate = 8.25357%
+/5/ dieterich, D, no_gentrome, no_valMap:
+>> Mapping rate = 9.83207%
+/5/ dieterich, H, no_gentrome, no_valMap:
+>> Mapping rate = 7.7375%
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+found systematic coordinate errors in Dieterich bed files.
+added code to 'circindex_generator.sh', only for Dieterich files:
+
+            $2=$2-1
+            $7=$7-1
+
+            if(i==1){
+                a2=a[i]+1
+            } else {
+                a2=a2 ","; a2=a2 a[i]
+            }
+            
+            if(i==1){
+                b2=b[i]
+            } else {
+                b2=b2 ","; b2=b2 b[i]+1
+            }
+
+rerun the following steps:
+from /2/ to /5/, all Dieterich stuff
+
+/2/ 			done
+/3/ 			done
+/4/ (gentrome) 		done
+/4/ (no_gentrome) 	done
+/5/ (gentrome, valMap) 	done
+/5/ (no_gentrome, valMap) 
+/5/ (gentrome, no_valMap) 
+/5/ (no_gentrome, no_valMap) 
+
+-------------------------------------------------------------------------
+# Di, 13.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+# valMap
+## gentrome
+/5/ dieterich, D, gentrome, valMap:
+>> Mapping rate = 28.5008%
+/5/ dieterich, H, gentrome, valMap:
+>> Mapping rate = 25.2162%
+## no_gentrome
+/5/ dieterich, D, no_gentrome, valMap:
+>> Mapping rate = 8.21522%
+/5/ dieterich, H, no_gentrome, valMap:
+>> Mapping rate = 6.71863%
+# no_valMap
+## gentrome
+/5/ dieterich, D, gentrome, no_valMap:
+>> Mapping rate = 33.0023%
+/5/ dieterich, H, gentrome, no_valMap:
+>> Mapping rate = 33.5283%
+## no_gentrome
+/5/ dieterich, D, no_gentrome, no_valMap:
+>> Mapping rate = 10.3413%
+/5/ dieterich, H, no_gentrome, no_valMap:
+>> Mapping rate = 8.17388%
+
+
+
+Next up: Salmon RiboZero
+RiboZero has no FUCHS output. We use our / dieterichs index instead.
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Our (gentrome, valMap):
+###############
+>> cd mouse_hippocampus_ribozero/gentrome
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_our/gentrome/index -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641435.trimmed.fastq.gz) --validateMappings --allowDovetail -o quant_SRX1641435_our_valMap
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_our/gentrome/index -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641436.trimmed.fastq.gz) --validateMappings --allowDovetail -o quant_SRX1641436_our_valMap
+
+Dieterich (gentrome, valMap):
+#######################
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_dieterich/gentrome/index -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641435.trimmed.fastq.gz) --validateMappings --allowDovetail -o quant_SRX1641435_dieterich_valMap
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_dieterich/gentrome/index -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641436.trimmed.fastq.gz) --validateMappings --allowDovetail -o quant_SRX1641436_dieterich_valMap
+
+Our (no_gentrome, valMap):
+#################
+>> cd mouse_hippocampus_ribozero/no_gentrome
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_our/no_gentrome/index -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641435.trimmed.fastq.gz) --validateMappings --allowDovetail -o quant_SRX1641435_our_valMap
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_our/no_gentrome/index -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641436.trimmed.fastq.gz) --validateMappings --allowDovetail -o quant_SRX1641436_our_valMap
+
+Dieterich (no_gentrome, valMap):
+#######################
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_dieterich/no_gentrome/index -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641435.trimmed.fastq.gz) --validateMappings --allowDovetail -o quant_SRX1641435_dieterich_valMap
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_dieterich/no_gentrome/index -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641436.trimmed.fastq.gz) --validateMappings --allowDovetail -o quant_SRX1641436_dieterich_valMap
+
+
+Our (gentrome, no_valMap):
+###############
+>> cd mouse_hippocampus_ribozero/gentrome
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_our/gentrome/index_no_decoy -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641435.trimmed.fastq.gz) --allowDovetail -o quant_SRX1641435_our_no_valMap
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_our/gentrome/index_no_decoy -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641436.trimmed.fastq.gz) --allowDovetail -o quant_SRX1641436_our_no_valMap
+
+Dieterich (gentrome, no_valMap):
+#######################
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_dieterich/gentrome/index_no_decoy -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641435.trimmed.fastq.gz) --allowDovetail -o quant_SRX1641435_dieterich_no_valMap
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_dieterich/gentrome/index_no_decoy -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641436.trimmed.fastq.gz) --allowDovetail -o quant_SRX1641436_dieterich_no_valMap
+
+Our (no_gentrome, no_valMap):
+#################
+>> cd mouse_hippocampus_ribozero/no_gentrome
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_our/no_gentrome/index -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641435.trimmed.fastq.gz) --allowDovetail -o quant_SRX1641435_our_no_valMap
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_our/no_gentrome/index -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641436.trimmed.fastq.gz) --allowDovetail -o quant_SRX1641436_our_no_valMap
+
+Dieterich (no_gentrome, no_valMap):
+#######################
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_dieterich/no_gentrome/index -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641435.trimmed.fastq.gz) --allowDovetail -o quant_SRX1641435_dieterich_no_valMap
+>> /common/salmon-0.14/bin/salmon quant -i ../../mouse_hippocampus_rnaser_dieterich/no_gentrome/index -l A -p 24 -r <(zcat /mnt/schratt/mouse_ribozero_hippocampus/SRX1641436.trimmed.fastq.gz) --allowDovetail -o quant_SRX1641436_dieterich_no_valMap
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+# valMap
+## gentrome
+/5/ ribozero, our, sample_1, gentrome, valMap:
+>> Mapping rate = 64.682%
+/5/ ribozero, our, sample_2, gentrome, valMap:
+>> Mapping rate = 65.5011%
+/5/ ribozero, dieterich, sample_1, gentrome, valMap:
+>> Mapping rate = 64.6888%
+/5/ ribozero, dieterich, sample_2, gentrome, valMap:
+>> Mapping rate = 65.5086%
+## no_gentrome
+/5/ ribozero, our, sample_1, no_gentrome, valMap:
+>> Mapping rate = 2.7604%
+/5/ ribozero, our, sample_2, no_gentrome, valMap:
+>> Mapping rate = 2.98043%
+/5/ ribozero, dieterich, sample_1, no_gentrome, valMap:
+>> Mapping rate = 1.50454%
+/5/ ribozero, dieterich, sample_2, no_gentrome, valMap:
+>> Mapping rate = 1.61931%
+# no_valMap
+## gentrome
+/5/ ribozero, our, sample_1, gentrome, no_valMap:
+>> Mapping rate = 65.1937%
+/5/ ribozero, our, sample_2, gentrome, no_valMap:
+>> Mapping rate = 65.9756%
+/5/ ribozero, dieterich, sample_1, gentrome, no_valMap:
+>> Mapping rate = 65.2011%
+/5/ ribozero, dieterich, sample_2, gentrome, no_valMap:
+>> Mapping rate = 65.9837%
+## no_gentrome
+/5/ ribozero, our, sample_1, no_gentrome, no_valMap:
+>> Mapping rate = 2.81859%
+/5/ ribozero, our, sample_2, no_gentrome, no_valMap:
+>> Mapping rate = 3.04039%
+/5/ ribozero, dieterich, sample_1, no_gentrome, no_valMap:
+>> Mapping rate = 1.54214%
+/5/ ribozero, dieterich, sample_2, no_gentrome, no_valMap:
+>> Mapping rate = 1.65959%
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Started working on 'quantification_comparison_rnaser_ribozero.Rmd':
+Compare transcript quantifications for FUCHS / Salmon on RNAseR / RiboZero data
+
+We are interested in the following comparisons:
+	- RiboZero vs. RNAseR
+	- FUCHS vs. Salmon
+	- valMap vs. no_valMap
+	- gentrome vs. no_gentrome
+
+We are NOT interested in:
+	- Dieterich vs. Our
+	(--> would be a comparison btw. old vs. new FUCHS)
+Which means that the differences in transcript labelling arent a problem.
+
+
+-------------------------------------------------------------------------
+# Mi, 14.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+work on 'quantification_comparison_rnaser_ribozero.Rmd'
+
+-------------------------------------------------------------------------
+# Do, 15.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Restructured directories:
+	- /home/tgermade/
+	- /mnt/schratt/tgermade_test
+	- /mnt/schratt/tgermade_test/circtools
+
+/mnt/schratt/tgermade_test/:
+
+files (.bed, .txt)
+mouse_GENCODEvM21/
+	Gentrome (.fa) & decoys (.txt)
+mouse_ribozero_hippocampus/
+	.tmp/
+	star/
+	circtools/
+mouse_rnaser_hippocampus/
+	.tmp/
+	star/
+	circtools/
+old_mouse_rnaser_control_hippocampus/
+	star/
+	circtools/
+flexbar/
+	RNAseR raw files trimmed (.fastq.gz)
+salmon/
+	bed_index_merger.R*
+	circIndex_generator.sh*
+	circIndex_generator.sh.save*
+	mouse_hippocampus_control_bohacek/
+	mouse_hippocampus_ribozero/
+	mouse_hippocampus_rnaser_dieterich/
+	mouse_hippocampus_rnaser_our/
+	test/
+scripts/
+	1746_salmon_v_fuchs.R*
+	1746_salmon_v_fuchs.final.R*
+	gtf_to_bed6_converter.R*
+	circtools_master.sh*
+	slurm_circtools_detect_mapping.sh*
+	fuchs_adjust_coordinates.sh*
+
+
+/Issue/:
+Salmon uses adjusted transcript coordinates ('circIndex_generator.sh').
+But the FUCHS exon_Counts.bed files aren't adjusted!
+--> Adjust coordinates for FUCHS output files
+
+
+Create 'fuchs_adjust_coordinates.sh'
+
+Important: NEVER use this script on dataset meant for Salmon processes. ONLY use it if the FUCHS output is what you're interested in.
+
+
+
+'quantification_comparison_rnaser_ribozero.Rmd':
+
+# create function:
+processing <- function(dataset1, dataset2){
+	- merging
+	- create scatterplot, add correlation using: 
+	legend("bottomright", legend=paste("cor=", round(cor(x,y),2)))
+	
+
+# present data in tables
+
+# present plots in groups, zB:
+
+RNAseR Our:
+
+ valMap	 no_valMap  
+ _______________
+|	|	| with linear transcripts
+|_______|_______|
+|	|	| without linear transcripts
+|_______|_______|
+--> contain plots with correlations: FUCHS vs Salmon
+
+
+-------------------------------------------------------------------------
+# Fr, 16.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Work on 'quantification_comparison_rnaser_ribozero.Rmd'
+
+-------------------------------------------------------------------------
+# Mo, 19.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Work on 'quantification_comparison_rnaser_ribozero.Rmd'
+
+-------------------------------------------------------------------------
+# Di, 20.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Work on 'quantification_comparison_rnaser_ribozero.Rmd'
+
+-------------------------------------------------------------------------
+# Mi, 21.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+'quantification_comparison_rnaser_ribozero.Rmd':
+generated plots
+
+/Issue1/:
+I forgot to correct the transcript coordinates for Our FUCHS bed files using 'fuchs_adjust_coordinates.sh'
+/Issue2/:
+After trying to correct the transcript coordinates of Our FUCHS bed files, we get negative exon start values all over the place. Reason: The exon starts are reversed! (negative strand)
+
+/Possible Solution 1/:
+Check out 'bed_index_merger.R': at some step the exons must have been ordered, else we would have gotten negative values in 1746_D_H.exon_counts.bed as well.
+
+/Possible Solution 2/:
+Change 'fuchs_adjust_coordinates.sh' code to account for negative strand data.
+
+
+
+After solving /Issue2/:
+
+Setup 'quantification_comparison_rnaser_ribozero.Rmd' like this:
+
+	1. Impact of valMap quant-option
+	2. How consistent are the quantifications across samples?
+		--> FUCHS D vs. H
+		--> Salmon D vs. H
+	3. FUCHS vs. Salmon
+
+
+-------------------------------------------------------------------------
+# Do, 22.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Concerning the exon coordinate correction for Our FUCHS bed quantifications:
+I got weird results for many transcripts (often negative exon start coordinates) after putting the FUCHS bed files through 'fuchs_adjust_coordinates.sh' (containing the coordinate manipulation copied from 'circIndex_generator.sh', used for the Salmon index generation). I noticed that in the original FUCHS bed files the coordinates have a weird exon order (only Ours! Dieterich ones are fine). When looking up '1746_D_H.exon_counts.bed' (the result of merging the D & S sample FUCHS bed files, used to later generate the index for Salmon), I found the exon start coordinates ordered from lowest to highest (which makes much more sense). When comparing the transcripts from the original FUCHS bed file (weird order) to '1746_D_H.exon_counts.bed' (sensible order), I found them to be identical (using IGV).
+I'm therefore assuming that the bed merger step (via 'bed_index_merger.R') at some point in its code ordered the exons. I thus tried to run the original FUCHS bed files (weird order) through a modified version of the 'bed_index_merger.R', to confirm the change in exon order. The right order is necessary so that the coordinate adjustments via 'fuchs_adjust_coordinates.sh' allow conformity to the Salmon transcript IDs and therefore comparison. I do however get an error I don't normally get: 
+
+	> bout1 <- asBED(bed_comb1)
+	Error in (function (classes, fdef, mtable)  : 
+	  unable to find an inherited method for function ‘asBED’ for signature ‘"GRanges"’
+
+Through the help function I find that the variable needs to have the 'GRnagesList' format rather than 'GRanges':
+
+	asBED(x, ...)
+	## S4 method for signature 'GRangesList'
+
+So I try this:
+
+	> bout1 <- asBED(GRangesList(bed_comb1))
+	Error in .local(x, ...) : 
+	  Empty or multi-strand/seqname elements not supported by BED
+
+I didn't find any empty elements and I'm not sure what a multi-strand/seqname is.
+
+
+- test the original code & the typeof() of some variables
+
+--> it works now. Question: Should we process the FUCHS bed files like this (get rid of duplicates, etc.)? Or ONLY order the exons?
+--> My call: only order
+--> Find out which command orders the coordinates. Is it asBED()?
+
+
+
+FUCHS bed file BEFORE 'bed_cleaner.R':
+>> wc -l /mnt/schratt/tgermade_test/mouse_rnaser_hippocampus/circtools/03_reconstruct/1746_D/1746_D.exon_counts.bed
+>> 14702
+
+FUCHS bed file AFTER 'bed_cleaner.R':
+>> wc -l /mnt/schratt/tgermade_test/mouse_rnaser_hippocampus/1746_D_H_corrected/1746_D.exon_counts.bed
+>> 14323
+
+
+Now AFRER (Removal of cases with mismatches btw ends of transcripts & ends of outermost exons (blocks)):
+>> wc -l /mnt/schratt/tgermade_test/mouse_rnaser_hippocampus/1746_D_H_corrected/1746_D.exon_counts.bed
+>> 14453
+
+--> Order fixed with:
+> error_sel()
+> blocks()
+> asBED()
+> export()
+
+/Issue/:
+With this change we lose some transcripts. This shouldnt be much of a problem since they are gotten rid of for the Salmon quants as well. In the end we dont lose information, since we wouldnt be able to compare them anyway.
+
+To do:
+- use 'fuchs_adjust_coordinates.sh' to adjust coordinates of the cleaned up FUCHS bed files (modified via 'bed_cleaner.R')
+- look at output in IGV, compare to reference & unmodified file
+- test if we find transcript overlaps now (in 'quantification_comparison_rnaser_ribozero.Rmd')
+
+-------------------------------------------------------------------------
+# Fr, 23.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+- used 'fuchs_adjust_coordinates.sh' to adjust coordinates of the cleaned up FUCHS bed files (modified via 'bed_cleaner.R')
+
+- looked at output in IGV, compare to reference & unmodified file
+--> looks good
+
+- tested if we find transcript overlaps now (in 'quantification_comparison_rnaser_ribozero.Rmd')
+--> now it works
+
+
+To do:
+- inform Pierre about the FUCHS bed file alterations that were necessary for the comparison to Salmon
+- select plots and sequence of information for result presentation (Rmd)
+
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Hi Pierre-Luc,
+
+I just want to update you on some difficulties I had (which I'd consider solved now):
+On Wednesday we looked at many plots and it turned out that I had forgotten to correct the coordinates for Our FUCHS bed files. I figured I'd just have to run the 'fuchs_adjust_coordinates.sh' script, containing the coordinate manipulation copied from 'circIndex_generator.sh', used for the Salmon index generation (basically do the same thing I did with the Dieterich FUCHS bed files). Of course there was a bit more to it: Running the coordinate adjustment script messed up the exon start coordinates (many negative values). The reason was that the exon start coordinates of Our original FUCHS bed files aren't properly ordered (not in ascending order). The Dieterich FUCHS bed exons are properly ordered and so are the ones of the merged bed files '1746_D_H.exon_counts.bed' (the combined D & S sample FUCHS bed files, used to later generate the index for Salmon). Comparing the sequences of our unordered original FUCHS bed files to the ordered '1746_D_H.exon_counts.bed' showed that they're identical (in IGV).
+I assumed that some part of the code in the merging script must've ordered the exons. I found the R functions 'blocks() & asBED()' to be the culprits. But to run them, I had to include the step where we exclude transcripts containing mismatches btw. their end coordinates & the ends of their outermost exons. Running the original FUCHS bed files through that new script finally made it possible to run the coordinate correction script and get the desired comparison to the Salmon quantifications (I have the plots now). But the selection step removed around 300 transcripts from the original FUCHS bed files (of roughly 14'700 in case of sample D). Since the lost transcripts aren't contained in the Salmon quantifications either, there should be no consequence to that.
+Did I miss something or does that sound fine? 
+
+Attached you'll find Our FUCHS vs. Salmon comparison result.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+
+
+	1. Impact of valMap quant-option
+	2. How consistent are the quantifications across samples?
+		--> FUCHS D vs. H
+		--> Salmon D vs. H
+	3. FUCHS vs. Salmon
+
+
+1. Which datasets to use?
+
+Our & Dieterich originate from the same reads, but different version of quantification software.
+RiboZero is a different dataset.
+
+* Our RNAseR D & RiboZero s1
+
+
+2. Which datasets to use?
+
+* Our RNAseR: FUCHS D vs. H
+* Dieterich RNAseR: FUCHS D vs. H
+* Our RNAseR: Salmon D vs. H
+* Dieterich RNAseR: Salmon D vs. H
+
+* Our RiboZero: Salmon s1 vs. s2
+
+v/nv? g/ng?
+Is it ok to use 'nv' just because it gives higher correlation, meaning it resembles the FUCHS data the most? We'll have to assess the trustworthiness of FUCHS: Does it find circRNA in only linRNA dataset (bohacek)? Does it find circRNAs in circRNA data from specific tissues that were confirmed in literature?
+Since FUCHS is an accomplished tool, maybe easiest to take it as reference.
+
+
+3. Which datasets to use?
+
+list_f_rnaser_our$D vs. list_s_rnaser_our$D_g_nv
+
+
+To do:
+- make heatmap (using correlation values)
+- build a logical narrative to guide through analysis
+
+
+-------------------------------------------------------------------------
+# Mo, 26.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Questions for Pierre:
+
+- Should I include the Dieterich results in the results?
+
+- Which narrative to choose:
+
+	1. We explore FUCHS & Salmon in our RNAseR data,
+		then move on to the question:
+		What if we apply what we learned to mixed data
+		(including linRNA)?
+	2. We integrate RiboZero data from the beginning,
+		exploring the methods including it
+
+	--> 2. risks confusing ppl:
+		many variables to keep track of at the same time
+		(FUCHS, Salmon, dataset 1, dataset 2, different parameters)
+
+- How justified are we to infer the quality of Salmon based on FUCHS quant?
+	(correlations as indicators of 'success')
+	How 'true' is the FUCHS quant?
+
+
+
+Created correlation heatmaps in 'quantification_comparison_rnaser_ribozero.Rmd'
+
+
+-------------------------------------------------------------------------
+# Di, 27.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Egigenetics Symposium ETH HG F 30
+
+To do:
+- Additional statistics on different datasets
+	How many non-cero count transcripts were found?
+		w / w/o gentrome, valMaps
+		FUCHS v. Salmon
+
+Salmon uses an index. it contains linear and circular rna sequences. Salmon calculates all possible isoforms. And computes counts depending on the assigned reads.
+--> it is possible for Salmon to find more transcripts than FUCHS
+	
+
+-------------------------------------------------------------------------
+# Mi, 28.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+Egigenetics Symposium ETH HG F 30
+
+
+Integrated a (semi-useful?) analysis of identified transcript ratios to compare the Salmon v. FUCHS methods in 'quantification_comparison_rnaser_ribozero.Rmd'
+
+# Comparing the found transcripts for the Salmon quantifications which included linear transcripts (_g_) to FUCHS quant (which only counts circRNAs) is not that interesting. (except if we wanted to assess how efficiently the RNAseR process removes linear transcripts from the samples)
+
+# Comparing the found transcripts for the Salmon quant which only used FUCHS quant as index (only circRNAs) is interesting though.
+
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+--> add to comparison of identified transcripts: ratio of COMMON identified transcripts!!
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+
+-------------------------------------------------------------------------
+# Do, 29.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+show how Our is better than Dieterich
+
+in comparison like fuchs_H_salmon_H_g_v
+find high expressed circrna from fuchs which isnt expressed in salmon & look at seq in igv
+
+
+
+*************************
+Presentation of results:
+*************************
+
+* 
+Problematics with circRNA quantification (we count BSJs but arent sure whats their full sequence) --> we want to quantify circRNA isoforms to at some point be able to identify miRNA binding site e.g.
+
+[]	good illustration from reviews
+
+*
+We could just use CircBase circRNA seqs, BUT: 1) we dont know how they were reconstructed & 2) we are able to quantify many times larger set of hippocampus circRNAs than what they have
+
+[]	image of circbase site/seqs
+[]	count: circbase hippo circRNAs vs. Our FUCHS hippo circRNAs
+
+*
+Present our data: RNAseR dataset (super high quality) from Dieterich lab
+
+[]	info about Dieterich dataset
+
+*
+They sent us quantifications. We compared those with our own (different versions of quantification software used) 
+
+[]	find metric to declare Our quant superior to Dieterich quant (ev IGV)
+
+*
+Quantification softwares
+
+[]	check alternatives to FUCHS circRNA quant software
+
+*
+FUCHS: how does it quantify? what do we get out of it?
+--> show BED files in IGV: compare FUCHS w. CircBase & linear Reference
+
+[]	illustrate what FUCHS does (w. different steps) & show outcome
+[]	image of circbase vs. FUCHS seqs
+
+*
+FUCHS: Problems
+- sequence coordinates --> coordinate correction (2 systems)
+- cant quantify on preexisting annotation (index)
+- slow
+- doesnt give relative lin/circ proportions
+
+[]	illustrate coordinate systems (& necessary correction)
+[]	illustrate problems
+
+*
+All those issues might be solved using Salmon-based quantification
+Salmon: how does it quantify? what do we get out of it?
+
+[]	illustrate what salmon does (w. different steps) & show outcome
+
+*
+ValMap: what is it? How does it affect quantification results?
+Our_salmon_D & _H: whats better, valMap or no_valMap?
+Poly_A (negative control, we should see no results): introduce dataset; whats better?
+--> choose one option over the other
+
+[]	s_rnaser_our$D_g_v vs. _nv, H_g_v vs. _nv
+[]	do salmon quant of PolyA data (bohacek negative control)
+[]	image from bohacek paper
+[]	s_ploya$s1_g_g_v vs. _nv, s2_g_v vs. _nv
+
+*
+FUCHS v. Salmon:
+How close do we get to FUCHS method?
+- gentrome v. no_gentrome:
+	can Salmon distinguish well btw. lin & circ tx?
+
+[]	scatterplot: s_rnaser_our$D_g_? vs. f_rnaser_our$D
+[]	metric of how no_gentrome is not extremely different from gentrome
+[]	tx count ratio statistics
+
+
+*
+What do we hope to achieve with Salmon?
+Use it on mixed lin/circ data (can use already published data & get circRNA isoforms)
+- introduce RiboZero dataset
+
+[]	illustrate RiboZero dataset
+
+*
+Did not work
+FUCHS didnt either
+
+[]	scatterplot: s_rnaser_our$X_g_? vs. s_riboz_our$X_g_?
+
+*
+What does it allow us to do instead?
+- create high quality index with e.g. FUCHS (expensive dataset)
+- for subsequent quantifications under same conditions, use lower quality data (cheaper, faster), instead of annotating & quantifying every time (FUCHS method) 
+
+[]	find proteomics example? (before: annotation with every quantification, after: separate annotation, faster quant)
+
+*
+Possible future endeavours:
+- reduce quality of our RNAseR dataset (single-end, shorter) & test Salmon performance
+- since we dont know how well FUCHS performs in the first place and were constantly using it as quality check: simulate data & compare FUCHS vs. Salmon
+- test additional quant methods (?)
+- compute miRNA binding sites on identified circRNA seqs & compare with CLIP data (especially: wait for publishing of Bartel data for binding affinities)
+- streamline circRNA quantifications
+
+
+To do:
+- quantify polyA data: w./w/o. valMap, w. gentrome
+- in comparison like fuchs_H_salmon_H_g_v
+find high expressed circrna from fuchs which isnt expressed in salmon & look at seq in igv
+
+
+polyA: gentrome, valMap
+########################
+/5/: Run salmon quant (for each sample in batch):
+>> cd /mnt/schratt/mouse_control_hippocampus/
+>> parallel -j1 --xapply /common/salmon-0.14/bin/salmon quant -i ../tgermade_test/salmon/mouse_hippocampus_rnaser_our/gentrome/index -l A -p 24 -r <(zcat ./{}) --validateMappings -o ../tgermade_test/salmon/mouse_hippocampus_polya_bohacek/quant_{}_valMap ::: *
+
+
+polyA: gentrome, valMap
+########################
+/5/: Run salmon quant (for each sample in batch):
+>> cd /mnt/schratt/mouse_control_hippocampus/
+
+s1:
+>> /common/salmon-0.14/bin/salmon quant -i ../tgermade_test/salmon/mouse_hippocampus_rnaser_our/gentrome/index -l A -p 24 -r <(zcat ./SRR5715023_wholeH_Homecage_repl1.fastq.gz) --validateMappings -o ../tgermade_test/salmon/mouse_hippocampus_polya_bohacek/quant_SRR5715023_wholeH_Homecage_repl1.valMap
+
+s2:
+>> /common/salmon-0.14/bin/salmon quant -i ../tgermade_test/salmon/mouse_hippocampus_rnaser_our/gentrome/index -l A -p 24 -r <(zcat ./SRR5715024_wholeH_Homecage_repl2.fastq.gz) --validateMappings -o ../tgermade_test/salmon/mouse_hippocampus_polya_bohacek/quant_SRR5715024_wholeH_Homecage_repl2.valMap
+
+s3:
+>> /common/salmon-0.14/bin/salmon quant -i ../tgermade_test/salmon/mouse_hippocampus_rnaser_our/gentrome/index -l A -p 24 -r <(zcat ./SRR5715025_wholeH_Homecage_repl3.fastq.gz) --validateMappings -o ../tgermade_test/salmon/mouse_hippocampus_polya_bohacek/quant_SRR5715025_wholeH_Homecage_repl3.valMap
+
+s4:
+>> /common/salmon-0.14/bin/salmon quant -i ../tgermade_test/salmon/mouse_hippocampus_rnaser_our/gentrome/index -l A -p 24 -r <(zcat ./SRR5715026_wholeH_Homecage_repl4.fastq.gz) --validateMappings -o ../tgermade_test/salmon/mouse_hippocampus_polya_bohacek/quant_SRR5715026_wholeH_Homecage_repl4.valMap
+
+s5:
+>> /common/salmon-0.14/bin/salmon quant -i ../tgermade_test/salmon/mouse_hippocampus_rnaser_our/gentrome/index -l A -p 24 -r <(zcat ./SRR5715027_wholeH_Homecage_repl5.fastq.gz) --validateMappings -o ../tgermade_test/salmon/mouse_hippocampus_polya_bohacek/quant_SRR5715027_wholeH_Homecage_repl5.valMap
+
+polyA: gentrome, no_valMap
+########################
+/5/: Run salmon quant (for each sample in batch):
+>> cd /mnt/schratt/mouse_control_hippocampus/
+
+s1:
+>> /common/salmon-0.14/bin/salmon quant -i ../tgermade_test/salmon/mouse_hippocampus_rnaser_our/gentrome/index_no_decoy -l A -p 24 -r <(zcat ./SRR5715023_wholeH_Homecage_repl1.fastq.gz) -o ../tgermade_test/salmon/mouse_hippocampus_polya_bohacek/quant_SRR5715023_wholeH_Homecage_repl1.no_valMap
+
+s2:
+>> /common/salmon-0.14/bin/salmon quant -i ../tgermade_test/salmon/mouse_hippocampus_rnaser_our/gentrome/index_no_decoy -l A -p 24 -r <(zcat ./SRR5715024_wholeH_Homecage_repl2.fastq.gz) -o ../tgermade_test/salmon/mouse_hippocampus_polya_bohacek/quant_SRR5715024_wholeH_Homecage_repl2.no_valMap
+
+s3:
+>> /common/salmon-0.14/bin/salmon quant -i ../tgermade_test/salmon/mouse_hippocampus_rnaser_our/gentrome/index_no_decoy -l A -p 24 -r <(zcat ./SRR5715025_wholeH_Homecage_repl3.fastq.gz) -o ../tgermade_test/salmon/mouse_hippocampus_polya_bohacek/quant_SRR5715025_wholeH_Homecage_repl3.no_valMap
+
+s4:
+>> /common/salmon-0.14/bin/salmon quant -i ../tgermade_test/salmon/mouse_hippocampus_rnaser_our/gentrome/index_no_decoy -l A -p 24 -r <(zcat ./SRR5715026_wholeH_Homecage_repl4.fastq.gz) -o ../tgermade_test/salmon/mouse_hippocampus_polya_bohacek/quant_SRR5715026_wholeH_Homecage_repl4.no_valMap
+
+s5:
+>> /common/salmon-0.14/bin/salmon quant -i ../tgermade_test/salmon/mouse_hippocampus_rnaser_our/gentrome/index_no_decoy -l A -p 24 -r <(zcat ./SRR5715027_wholeH_Homecage_repl5.fastq.gz) -o ../tgermade_test/salmon/mouse_hippocampus_polya_bohacek/quant_SRR5715027_wholeH_Homecage_repl5.no_valMap
+
+
+
+-------------------------------------------------------------------------
+# Fr, 30.08.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+To do:
+- analyze polyA data: w./w/o. valMap, w. gentrome
+- in comparison like fuchs_H_salmon_H_g_v:
+	find high abundance circRNA from FUCHS which isnt present in Salmon & look at seq in igv
+
+
+# PolyA data suggests: we should use no_valMap data. It results in lower non-cero circRNA counts, lower median values for non-cero circRNA counts and slightly higher maximum values for non-cero circRNA counts.
+
+# ENSMUST00000146832:50,79,116,271:0,735,2068,5013
+counts in fuchs: 	728
+counts in salmon D_g_nv: 0
+
+(What exactly to look for?)
+
+	+ Is present in both D & H FUCHS quants
+	+ Aligns to genome reference (genes.bed in /mnt/reference/)
+	~ Aligns to inbuilt IGV reference (to large degree)
+	- Isn't present in CircBase annotation (circbase_mouse_mm10.bed)
+	
+# ENSMUST00000176258:99,137,149,132:0,4135,16523,22229
+counts in fuchs: 	611
+counts in salmon D_g_nv: 0
+
+	+ Is present in both D & H FUCHS quants
+	+ Aligns to genome reference (genes.bed in /mnt/reference/)
+	~ Aligns to inbuilt IGV reference (to large degree)
+	+ Present in CircBase annotation (circbase_mouse_mm10.bed)
+
+
+Does #2 exist in other Salmon quants?
+
+D_g_v:	YES	(TPM = 3.488718)
+H_g_nv:	YES	(TPM = 0.275006)
+H_g_v:	NO	(TPM = 0)
+
+(TPMs range from 0 to 100'000)
+
+
+Does #2 exist in Dieterich Salmon quants?
+
+>> list_s_rnaser_diet$H_g_nv[grepl("\\:99,137,149,132\\:0,4135,16523,22229", list_s_rnaser_diet$H_g_nv$Name),]
+>> list_s_rnaser_diet$H_g_v[grepl("^10\\:25267369\\-25289730", list_s_rnaser_diet$H_g_v$Name),]
+
+
+D_g_nv:	cant find
+D_g_v:	cant find
+H_g_nv:	cant find
+H_g_v: 	cant find
+
+
+
+-------------------------------------------------------------------------
+# Di, 03.09.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+
+CircBase database:
+- circRNA via Segemehl (http://www.bioinf.uni-leipzig.de/Software/segemehl/)
+['A multi-split mapping algorithm for circular RNA, splicing, trans-splicing and fusion detection.' - S. Hoffmann et al. 2014]
+
+['Detecting and characterizing circular RNAs' - Jeck & Sharpless 2014]
+
+
+
+Questions & comments for Pierre:
+
+- The downloaded circBase dataset (mouse mm9/10, brain samples) has 1903 entries. On their website they list a total of 30596 entries (# circRNAs).
+The smallest sized datasets are: hippocampus (1212), prefr. cortex (1677), olf. bulb (1771) & synaptoneurosomes (1773). The downloaded dataset can only be comprised of these datasets (if we accept that the datasets overlap to a very large degree). In the very best case, it lacks data from 6 datasets. Whats the meaning?
+
+- I read the Memczak & al. (2013) paper where they explain their circRNA quantification method. I didn't find evidence that they reconstructed the identified circRNAs, they might really just have included all exons btw. BSJ sites. (It would be interesting to check the number of FUCHS bed entries after collapsing all isoforms.)
+
+- What program do you use for presentation? I don't have Powerpoint on my Ubuntu machine (I have a Windows PC at home though). Are there windows laptops that I could use for the presentation itself?
+
+- v vs. nv correlations very high for RNAseR data, but quite low comparatively for PolyA data. FIGURE
+
+
+-------------------------------------------------------------------------
+# Mi, 04.09.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+work on report & presentation
+
+-------------------------------------------------------------------------
+# Do, 05.09.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+work on report & presentation
+
+-------------------------------------------------------------------------
+# Fr, 06.09.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+work on report & presentation
+
+-------------------------------------------------------------------------
+# Sa, 07.09.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+work on report & presentation
+
+-------------------------------------------------------------------------
+# So, 08.09.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+work on report & presentation
+
+-------------------------------------------------------------------------
+# Mo, 09.09.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+work on report & presentation
+
+-------------------------------------------------------------------------
+# Di, 10.09.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+work on report & presentation
+
+email to Pierre:
+############################################################
+I actually have some new updates & questions:
+
+From last time:
+
+#1: I did the histograms. I used the FUCHS quantification to separate linear from non-linear transcripts (everything in FUCHS: circular; the rest: linear). They're appended to the mail (1st & 2nd). Concerning the mentioned exercise: Once I got the presentation & the report narrative ready, I'll try to tackle it. To do this, you'd have to load a gene annotation, go through all its genes, find the quantified transcripts that fall into the same range, separate all FUCHS from non-FUCHS transcripts, get their counts and plot. Right? 
+ 
+#2: I'm not sure I fully understand the UTR issue. Can you explain that again when we meet?
+Concerning read alignments to exons: I looked at the STAR alignment vs. reference vs. FUCHS quantification, but I don't know what to make of it. All I'm able to discern is that there are reads for all the exons and regions in between... I think there aren't many alignment errors.
+
+#3: If it's acceptable I'd rather have the Results & Methods combined. I'll show you what I currently have when we meet.
+
+#4: Yes, I'm a bit worried. For all circ vs. lin RNA comparisons I'm using FUCHS as reference... I figure including CircBase transcripts wouldn't help, since it's so conservative.
+
+
+New topics:
+
+#5: The downloaded circBase dataset (mouse mm9/10, brain samples) has 1903 entries. On their website (home) they list a total of 30596 entries (# circRNAs).
+The smallest sized datasets are: hippocampus (1212), prefr. cortex (1677), olf. bulb (1771) & synaptoneurosomes (1773). The downloaded dataset can only be comprised of these datasets (if we accept that the datasets overlap to a very large degree). In the very best case, it lacks data from 6 datasets. What am I missing?
+
+#6: Again concerning CircBase: I read the Memczak & al. (2013) paper where they explain their circRNA quantification method. I didn't find evidence that they reconstructed the identified circRNAs. They might, as you already speculated, just have included all exons btw. BSJ sites. How likely is it that they did quantify isoforms but didn't document it in their paper?
+(sidenote: It would be interesting to check the number of FUCHS bed entries after collapsing all isoforms, then compare them to the number on CircBase...)
+
+#7: For the presentation: Are there Windows laptops that I could use for the presentation? I'm currently using Powerpoint and I don't have sockets to connect to the projector on my Ubuntu machine.
+
+#8: validateMappings: as you've already seen, the correlations btw. valMap & no_valMap are very high for the RNAseR data. I looked at the correlation for the PolyA data, and its much lower. I have a figure appended (3rd): left: all transcripts; right: all 0 count transcripts omitted. Does that make sense to you?
+
+############################################################
+
+
+-------------------------------------------------------------------------
+# Mi, 11.09.19
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
