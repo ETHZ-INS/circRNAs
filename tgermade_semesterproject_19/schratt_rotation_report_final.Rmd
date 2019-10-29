@@ -1,0 +1,487 @@
+---
+title: "Schratt semester project report"
+author: "Tomás Germade, Pierre-Luc Germain"
+date: "`r Sys.Date()`"
+output:
+   rmdformats::readthedown:
+     highlight: tango
+     self_contained: true
+     thumbnails: true
+     lightbox: true
+     gallery: false
+     keep_md: no
+     number_sections: yes
+     fig_width: 8
+     fig_height: 6
+     fig_caption: true
+     df_print: paged
+     code_folding: hide
+     citation_package: natbib
+bibliography: schratt_rotation.bib
+---
+
+<style type="text/css">
+img.image-thumb {
+    width: 400px;
+}
+.figure {
+    text-align: center;
+}
+.figure p.caption {
+    margin: 0 25px 0 25px;
+    text-align:justify;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::read_chunk("/home/tomas/Documents/Schratt_Lab/schratt_rotation_process.R")
+```
+
+# Abstract
+CircRNAs can be identified by their back-splice junctions (BSJ) which are unique to circular transcripts. Differences in exon and intron composition of the sequences between back-splice sites however can result in different circRNAs sharing identical BSJ. Among other things, knowledge about individual sequence makeup is crucial for binding site predictions involved in the functional characterization of circRNAs as miRNA sponges. We therefore investigated two tools for their reconstruction. FUCHS is tailored for this task but slow. Salmon on the other hand is fast but developped to quantify linear transcripts. Its capabilities in circRNA reconstruction were yet unknown. Salmon achieved high correlation with results obtained from FUCHS at a fraction of its runtime when analyzing samples enriched for circRNA (RNAseR-treated). Both methods however failed to accurately quantify samples containing both linear and circular transcripts (RiboZero-treated). Along the process we generated an extensive circRNA isoform annotation of the mouse hippocampus and several scripts to streamline circRNA quantification and reconstruction. 
+
+# Introduction
+Linear and circular RNAs derive from the same genes. CircRNAs are formed through backsplicing, fusing together the tails of otherwise linear transcripts. The point of fusion is referred to as back-splice junction (BSJ) and is exclusive to circular transcripts. Different splicing events in general define which exons and introns are included in any given circRNA. Among other things, circRNAs have been found to act as regulators of gene expression, mRNA-like templates for translation, protein scaffolds and sponges for miRNAs [@hansen_mirna-dependent_2011] and RNA-binding proteins (RBPs) [@kristensen_biogenesis_2019]. 
+
+The quantification of circRNA isoforms is commonly comprised of three steps: read mapping, circRNA detection and isoform reconstruction [@jakobi_computational_2019]. The combination of [STAR](https://github.com/alexdobin/STAR) [@dobin_star_2013], [DCC](https://github.com/dieterich-lab/DCC) [@cheng_specific_2016] and [FUCHS](https://github.com/dieterich-lab/FUCHS) [@metge_fuchstowards_2017] cover each step respectively. Dieterich et al. integrated the latter two into their [circtools](https://github.com/dieterich-lab/circtools) [@jakobi_circtoolsone-stop_2019] software. Circtools detect (DCC step) identifies circRNA BSJs by reads spanning chimeric junctions aligning to the reference genome in an inverted order. Circtools reconstruct (FUCHS step) identifies the inner structure of the circRNAs discovered in the previous step by analyzing reads spanning splice junctions. We refer to this method of quantification as FUCHS method. This approach comes with several limitations. Its runtime is comparably slow, the annotations it generates are sample-specific and can't be reused and it only considers a small fraction of reads for sequence reconstruction.  
+We therefore investigated the suitabilty of [Salmon](https://github.com/COMBINE-lab/salmon) [@patro_salmon_2017], a tool developped to quantify linear RNA isoforms, in likewise quantifying circular variants. Salmon maps the supplied reads based on short k-mers which, together with its efficient programming, speeds up runtime considerably. In addition, it incorporates all available reads into RNA isoform reconstruction and is capable of reusing existing annotations. The latter enables fast quantification of cheaper follow-up experiments once a first careful profiling of circular transcripts is done.
+
+Our aim was to predict miRNA binding sites on circRNAs in the mouse hippocampus, thus revealing circRNA candidates involved in sponge function. Since information about the actual internal sequence of the transcripts is essential to achieve this, we performed isoform quantifications based on the introduced tools. Our first dataset was produced specifically for this purpose (RNAseR-treated with long paired-end reads). Both tools were successful in quantifying these samples, with Salmon achieving high correlation with the more conservative FUCHS method. We were able to decrease false identification of circRNAs using a PolyA dataset, enriched for linear RNA transcripts. To test whether similar results could be obtained with cheaper, more commonly used RNAseq libraries, we analyzed a dataset containing both linear and circular transcript variants (RiboZero-treated with short unpaired reads). However, both methods failed. While FUCHS was unable to resolve any sequences, Salmon did so unreliably. The planned subsequent analysis of miRNA binding sites was put on hold in anticipation of new and yet unpublished insights into their binding affinities by Bartel et al.
+
+# Data
+
+## CircBase
+```{r import circbase, eval=FALSE}
+```
+
+```{r circbase}
+load("circbase.RData")
+```
+We had the option to use the public [CircBase](http://circbase.org/) dataset for full circRNA sequence access. However, there are two issues that dissuaded us. First, the dataset is small, only containing `r nrow(circbase)` transcripts, despite being derived from various mouse tissues, most of which stem from the brain. Secondly, we didn't find information on the applied sequence reconstruction [@rybak-wolf_circular_2015] [@memczak_circular_2013]. Since the dataset doesn't provide unequivocal isoform resolution, we decided to perform our own circRNA sequence reconstruction.
+
+## RNAseq datasets
+
+All datasets derive from mouse hippocampus samples. We had 3 at our disposal, each undergone different treatment.  
+Our first dataset derives from RNAseR-treated samples and is thus enriched in circRNAs. It was provided by the Dieterich lab and of high quality. It consists of two samples, one from young, one from old mice, each with 250 bp paired-end reads. It served as positive control for our circRNA quantifications.  
+Our second dataset derives from PolyA-treated samples and are enriched in linear RNAs. It was provided by the Bohacek lab [@floriou-servou_distinct_2018]. It consists of 5 replicates each with 126 bp unpaired reads. It served as negative control.  
+Our third and final dataset derives from RiboZero-treated samples, contains both linear and circular RNA and is depleted of ribosomal RNA. It was published by Iacono et al.[@iacono_integrated_2017]. It consists of 2 replicates, each with 42 bp unpaired reads. Our hope is to identify circRNA isoforms in datasets such as this.
+
+
+## Annotations
+All resources stem from GENCODE GRCm8.p5 mouse libraries:  
+
+* reference genome: `genome.fa`  
+* gene annotation: `genes.gtf`  
+* exon annotation: `mouse_GRCm8_p5.GENCODE.exons.bed`, created from `genes.gtf` with the `gtf_to_bed6_converter.R` script  
+* transcriptomes:  
+  + `gentrome.fa` & `decoys.txt`: used for Salmon with linear index & `validateMappings`  
+  + `transcripts.fa`: used for Salmon with linear index  
+  
+## Scripts
+
+* `bed_index_merger.R`  
+* `circIndex_generator.sh`  
+* `circtools_master.sh`  
+* `fuchs_adjust_coordinates.sh`  
+* `gtf_to_bed6_converter.R`  
+* `schratt_rotation_functions.R`  
+* `schratt_rotation_process.R`  
+* `schratt_rotation_report.Rmd`
+* `slurm_circtools_detect_mapping.sh`  
+
+## Files
+
+* `circbase.RData`  
+* `list_f_rnaser.RData`  
+* `list_merged.RData`  
+* `list_s_polya.RData`  
+* `list_s_riboz.RData`  
+* `list_s_rnaser.RData`  
+* `salmon_tx_stats.RData`  
+* `salmon_valmap_stats.RData` 
+* `schratt_rotation.bib`
+
+## Plot functions
+
+### Correlation plot
+
+```{r cor plot}
+#############################################################################
+#' correlation plot
+#'
+#' function that takes 2 datasets and creates plot & correlation
+#'
+#' @param dataset 1
+#' @param dataset 2
+#'
+#' @return correlation plot
+#' 
+analysis <- function(x, y){
+  library(LSD)
+  ## allocation
+  if( grepl("_s_", deparse(substitute(x))) ){
+    name_x <- sub(".*\\$", "Salmon.", deparse(substitute(x)))
+  } else {
+    name_x <- sub(".*\\$", "FUCHS.", deparse(substitute(x)))
+  }
+  if( grepl("_s_", deparse(substitute(y))) ){
+    name_y <- sub(".*\\$", "Salmon.", deparse(substitute(y)))
+  } else {
+    name_y <-  sub(".*\\$", "FUCHS.", deparse(substitute(y)))
+  }
+  colnames(x) <- paste0(colnames(x), ".", name_x)
+  colnames(y) <- paste0(colnames(y), ".", name_y)
+  colnames(x)[grep("^Name",colnames(x))] <- "Name"
+  colnames(y)[grep("^Name",colnames(y))] <- "Name"
+  int <- merge(x, y, by="Name")
+  if( grepl("Salmon", name_x) ){
+    counts_x <- log1p(int[,paste0("TPM", ".", name_x)])
+  } else {
+    counts_x <- log1p(int[,paste0("Counts", ".", name_x)])
+  }
+  if( grepl("Salmon", name_y) ){
+    counts_y <- log1p(int[,paste0("TPM", ".", name_y)])
+  } else {
+    counts_y <- log1p(int[,paste0("Counts", ".", name_y)])
+  }
+  ## plot
+  heatscatter(counts_x, counts_y, xlab = name_x, ylab = name_y, main = "")
+  legend("bottomright", legend = paste("cor =", round(cor(counts_x,counts_y),2)), bty="n")
+}
+```
+
+### Density plot: validateMappings
+
+```{r density plot 1}
+#############################################################################
+#' salmon polya circRNA distributions
+#'
+#' function to assess count distributions of non-cero circRNA transcripts in PolyA data:
+#' valMap vs. no_valMap
+#'
+#' @param v Salmon sample quantified with valMaps
+#' @param nv Salmon sample quantified with no_valMaps
+#' @param fuchs Combined fuchs sample
+#'
+#' @return Density plot of TPM values of Salmon samples
+#' 
+double_hist <- function(v, nv, fuchs){
+  library(ggplot2)
+  library(cowplot)
+  int_v <- merge(v, fuchs, by="Name")
+  int_nv <- merge(nv, fuchs, by="Name")
+  int_v$id <- "valMaps"
+  int_nv$id <- "no valMaps"
+  vals <- as.data.frame( rbind(int_v, int_nv) )
+  ### density curve plot
+  p <- ggplot(vals, aes(TPM, fill = id))
+  p + scale_x_continuous(trans = "log10") + geom_density(alpha = .5) + 
+    theme_cowplot() + guides(fill=guide_legend(title=""))
+}
+```
+
+### Density plot: linear & circular RNA
+```{r density plot 2}
+#############################################################################
+#' circ/lin ratio plots
+#'
+#' function to plot circ vs. lin RNA quantifications
+#'
+#' @param salmon Salmon sample
+#' @param fuchs Combined fuchs sample
+#'
+#' @return Density plot of lin vs circ transcript TPMs
+#' 
+lin_v_circ_plot <- function(salmon, fuchs){
+  library(ggplot2)
+  library(cowplot)
+  comb <- merge(salmon, fuchs, by="Name")
+  circ <- salmon[salmon$Name %in% comb$Name,]
+  lin <- salmon[!salmon$Name %in% comb$Name,]
+  circ$id <- "circular"
+  lin$id <- "linear"
+  vals <- as.data.frame( rbind(circ, lin) )
+  ### density curve plot
+  p <- ggplot(vals, aes(TPM, fill = id))
+  p + scale_x_continuous(trans = "log10") + geom_density(alpha = .5) + 
+    theme_cowplot() + guides(fill=guide_legend(title=""))
+}
+```
+
+# Methods & Results
+
+## circRNA quantifications
+An overview of available circRNA isofrom quantification methods was published by Jakobi and Dieterich (2019). We chose to use FUCHS and Salmon as an additional experimental method.  
+
+<center>
+<div id="ref_fig1">
+![**Figure 1:** FUCHS and Salmon circRNA isoform quantification processes and their dependencies. Necessary input files are shown for each step. The steps up to and including FUCHS sequence reconstruction were integrated into a wrapper called `circtools_master.sh`. Two of the steps required for Salmon index creation (merge bed files & generate index) were summarized in the scripts `bed_index_merger.R` and `circIndex_generator.sh`. Once an index is generated, Salmon can reuse it for subsequent quantifications.](/home/tomas/Documents/Schratt_Lab/schratt_process.png)
+</div>
+</center>
+
+### FUCHS (v0.2.0)
+We first mapped the reads using version 2.6.1a of the STAR sequence aligner. We initiated STAR to output information about chimeric alignments and junctions. Parameters were taken over from the [documentation by Dieterich et al.](https://circtools.readthedocs.io/en/latest/index.html) (see `slurm_circtools_detect_mapping.sh` for more information). To quantify BSJ-spanning reads we used the circtools software, developped by the Dieterich lab. It entails 2 distinct steps: 1) A circRNA detection step (version 0.4.7 of DCC), counting reads covering circRNA backsplice junctions. 2) A circRNA reconstruction step (version 0.2.0 of FUCHS), using exon junction covering reads to assess isoform sequences. We followed the documentation provided by the creators for the their implementation, using the suggested settings. We end up with `bed` files containing information about transcript coordinates relative to a reference genome and their counts. All steps were integrated into a wrapper called `circtools_master.sh`. We focused on making script implementation simple and flexible.  
+
+We encountered some issues with the quantification output received from version 0.2.0 of FUCHS:  
+
+1) A small amount of transcripts received empty exon coordinate information or coordinates containing negative values. These instances were removed from the output and not considered for subsequent analyses.  
+2) All coordinates were systematically shifted.  
+3) In the majority of cases the transcripts were assigned single nucleotide exons on either or both tails of their sequence.  
+
+The latter 2 issues were identified when comparing the received sequences to our reference genome, the mouse brain circRNA library downloaded from CircBase and a quantification of our data received from a previous version of FUCHS (<a href="#ref_fig2">Figure 2</a>). All the issues were corrected using the `fuchs_adjust_coordinates.sh` script and reported to the developpers accordingly.  
+Since FUCHS quantifies transcripts identified by DCC, no information on linear RNA transcripts is gained. It resolves internal circRNA sequences exclusively by analyzing reads spanning splice junctions.
+This method is slow and is not able to reuse already created annotations for subsequent quantifications. We thus decided to investigate an alternative method to address these shortcomings. 
+
+<center>
+<div id="ref_fig2">
+![**Figure 2:** An example of the issues we encountered using FUCHS version 0.2.0. All exon start coordinates are systematically shifted. Most transcripts show single nucleotide exons at either the start or at the end of the transcript sequence. Comparison to reference genomes, CircBase transcripts and sequences generated by an older version of FUCHS (not shown) suggest that these are errors. Sequence correction was done using `fuchs_adjust_coordinates.sh`. Blue: mm10 mouse genome; black: CircBase mouse brain dataset; green: FUCHS version 0.2.0 sequences.](/home/tomas/Documents/Schratt_Lab/schratt_fuchs_bugs.png)
+</div>
+</center>
+
+```{r import fuchs rnaser, eval=FALSE}
+```
+
+```{r load fuchs}
+load("list_f_rnaser.RData")
+```
+
+### Salmon (v0.8.1)
+Salmon was developped to quantify linear transcripts. We investigated the feasibility of using it for circRNA transcript quantification. Salmon uses a transcript index, a library of RNA sequences, to which the reads are assigned based on their congruence. Such an index is generated via `salmon index` command. The quantification itself via `salmon quant`. Since Salmon does not distinguish btw. quantification of linear and circular transcripts, the distinction needs to be based on the index it receives. We generated a circRNA index based on a high sensitivity FUCHS quantification of our RNAseR dataset as follows: The `bed` output files generated by FUCHS for both young and old samples were first merged using the `bed_index_merger.R` script. After an initial check of exon coordinate reliabilty, this script discards transcripts with lower scores in cases of duplicate entries (entries were considered duplicates with up to 2 nts of difference). The merged bed file was then cleaned up, converted to `fasta` format and circularized using the `circIndex_generator.sh` script. Circularization consists of appending each tail of a transcript sequence to its opposite tail. The length of the appended sequences should be half the length of the reads to ensure that reads spanning the the BSJ regions can be successfully mapped. Since we created an index based on our RNAseR data, the length of the appended sequences was 125 bp.   
+The resulting `fasta` indices were either directly fed into `salmon index` to quantify reads based purely on a circRNA index, or first merged with a linear RNA `fasta` index to then quantify reads based on both linear and circular RNA indices. The combined index allows for the distinction of linear and circular transcripts in any given sample. It avoids the incorrect assignment of reads originating from linear transcripts to circular ones.  
+
+`salmon quant` can be run with an option called `validateMappings` (see [Salmon documentation](https://salmon.readthedocs.io/en/latest/)). It enables additional statistical analysis based on mapping scores of the reads. According to the authors, it improves sensitivity and considerably improves accuracy over the faster default mapping. We ran our quantifications both with and without this option. In the cases where we enabled the `validateMappings` option and used a merged index, the linear transcript index contained decoys. Salmon can use these to reduce false positive read assignment.  
+
+When supplied with a merged annotation index, quantification of both linear & circular transcripts is possible. Unlike FUCHS, it takes all supplied reads into account when quantifying. Thanks to the efficient kmer read assignment strategy it vastly outperforms FUCHS in terms of runtime. Moreover, it has the capability to use pre-existing annotations.
+
+```{r import salmon rnaser, eval=FALSE}
+```
+
+```{r import salmon polya, eval=FALSE}
+```
+
+```{r import salmon ribozero, eval=FALSE}
+```
+
+```{r load salmon}
+load("list_s_rnaser.RData")
+load("list_s_polya.RData")
+load("list_s_riboz.RData")
+```
+
+## FUCHS vs. Salmon
+```{r salmon fuchs, eval=FALSE}
+```
+
+```{r load cors}
+load("list_f_s_cors.RData")
+```
+
+To check the performance of Salmon we compare it to the circRNA-specific method of FUCHS quantification. FUCHS quantification of the RNAseR samples, if we include the necessary steps leading up to sequence reconstruction, took around 2 days (running on 24 cores). Since Salmon depends on transcript index provision, we generated a circRNA index file based on the quantification results received from FUCHS. Once this step is concluded, Salmon takes roughly 20 minutes (running on 24 cores) to quantify the RNAseR samples. To check its performance we compare the results to the ones received from FUCHS. The correlations of the RNAseR quantifications between the two methods was `r round(mean(c(cor_s_f_young, cor_s_f_old)),2)` ± `r round(sd(c(cor_s_f_young, cor_s_f_old)),2)` when combining both samples. The individual results are shown in <a href="#ref_fig3">Figure 3</a>. Based on these results we decided to move on and take a more detailed look at Salmon. 
+
+<div id="ref_fig3">
+```{r salmon fuchs plot, fig.height=5, fig.width=10, fig.align="center", fig.cap="**Figure 3:** Correlation between FUCHS and Salmon quantifications of the RNAseR treated dataset. Salmon reaches sufficient preliminary correlation with FUCHS at high runtime speed to justify further analysis. On the left: young mouse sample of RNAseR dataset; on the right: old mouse sample of RNAseR dataset."}
+# Salmon/FUCHS RNAseR
+
+## Plots & correlations; RNAseR Our: valMap
+layout(matrix(1:2, nrow = 1))
+analysis(list_f_rnaser_our$young, list_s_rnaser_our$young_g_v)
+analysis(list_f_rnaser_our$old, list_s_rnaser_our$old_g_v)
+```
+</div>
+
+## Salmon parameters
+
+Salmon's performance depends to a large degree on the received index and settings. We created different annotation indices to verify their expected effects on the results. Additionally, we focused on the influence of one of Salmon's options which is reported to improve output accuracy.
+
+```{r salmon parameters lists, eval=FALSE}
+```
+
+```{r load merged lists}
+load("list_merged.RData")
+```
+
+### Combined vs. circular index
+
+Salmon cannot detect transcripts which aren't listed in the index and will falsely assign reads to transcripts if the index isn't sufficiently comprehensive. To confirm this conception, we quantified the RNAseR samples once with provision of an index exclusively composed of circular and once with an index composed of both circular and linear transcripts. The circRNA index was generated based on FUCHS quantification. We expected to see a drop in quantification accuracy for the samples exclusively processed with circular annotation. This turned out to be true for both RNAseR samples (<a href="#ref_fig4">Figure 4B</a>). 
+
+<div id="ref_fig4">
+```{r salmon rnaser gencode plot, fig.align="center", fig.cap="**Figure 4:** Investigating the effect of different transcript libraries on Salmon quantification. The results of one of the circRNA-enriched RNAseR samples is shown. All samples were collected from mouse hippocampi. **A.** Correlation of Salmon quantification results containing and lacking linear transcript annotations. There is a decrease in correlations when we disable one of Salmon's options. On the left: Salmon with `validateMappings` enabled; on the right: disabled. **B.** Correlation of Salmon and FUCHS quantifications with and without linear transcript annotation. The result from Figure 3 (left) is contrasted with the results we received after omitting linear transcript annotations (right). All other parameters were kept identical. Correlation with the circRNA specific FUCHS method expectedly decreases when omitting linear indices. Residual linear transcripts are misassigned to circular indices."}
+# Salmon/FUCHS RNAseR
+
+## Plots & correlations; RNAseR Our: valMap vs no_valMap
+layout(matrix(1:4, nrow = 2))
+analysis(list_s_rnaser_our$young_ng_v, list_s_rnaser_our$young_g_v)
+analysis(list_f_rnaser_our$young, list_s_rnaser_our$young_g_v)
+analysis(list_s_rnaser_our$young_ng_nv, list_s_rnaser_our$young_g_nv)
+analysis(list_f_rnaser_our$young, list_s_rnaser_our$young_ng_v)
+mtext(expression(bold(A)), outer = TRUE,  line = -3, adj = 0.03)
+mtext(expression(bold(B)), outer = TRUE,  line = -21.5, adj = 0.03)
+```
+</div>
+
+### validateMappings
+Salmon can be run in different modes and for different data formats depending on the selected options. One such option is called `validateMappings`. It offers selective read alignment to the supplied index based on assigned scores for each potential mapping site. In addition, it allows provision of transcriptome annotations spiked with decoy elements (`gentrome.fa`). The decoys are identified with help of an index (`decoys.txt`). Their purpose is to reduce false positive read assignment. According to the authors, enabling this option results in higher accuracy quantifications and minimal increase in runtime. We decided to test Salmon's performance with and without this option enabled to assess its suitability for investigating circRNA isoforms, a purpose not explicitly accounted for by the authors. Initial tests are based on the circRNA-enriched RNAseR mouse hippocampus dataset.  
+
+Omission of the `validateMappings` option resulted in a 5 - 8 % increase in mapping rates. Comparison of the quantification results showed a high correlation between both modes (<a href="#ref_fig5">Figure 5A</a>). Correlation with the results obtained through FUCHS quantification increased by a small margin for one of the two RNAseR samples when running Salmon without `validateMappings` (<a href="#ref_fig5">Figure 5B</a>). Both comparisons suggest a minimal effect of the option on Salmon's performance. We decided to take a more in-depth look at the effects to allow for a more substantial decision on the selection of either mode.
+
+<div id="ref_fig5">
+```{r salmon rnaser valmap plot, fig.align="center", fig.cap="**Figure 5:** Investigating the effect of the `validateMappings` option on Salmon quantification. All results are based on our mouse hippocampus RNAseR samples. **A.** Correlation of quantification results with `validateMappings` enabled and disabled. Both young and old mouse samples are depicted (left and right respectively). The differences are minimal. **B.** Disabling `validateMappings` increases the correlation betweeen Salmon and FUCHS quantifications for one of the 2 RNAseR samples. No change is observed for the young mouse sample. Again, the option appears to affect our results only marginally."}
+# Salmon RNAseR: valMap analysis
+
+## Plots & correlations; RNAseR Our: valMap vs no_valMap
+layout(matrix(1:4, nrow = 2))
+analysis(list_s_rnaser_our$young_g_nv, list_s_rnaser_our$young_g_v)
+analysis(list_f_rnaser_our$old, list_s_rnaser_our$old_g_v)
+analysis(list_s_rnaser_our$old_g_nv, list_s_rnaser_our$old_g_v)
+analysis(list_f_rnaser_our$old, list_s_rnaser_our$old_g_nv)
+mtext(expression(bold(A)), outer = TRUE,  line = -3, adj = 0.03)
+mtext(expression(bold(B)), outer = TRUE,  line = -21.5, adj = 0.03)
+```
+</div>
+
+## Salmon errors
+```{r salmon polya valmap, eval=FALSE}
+```
+
+```{r load polya stats}
+load("salmon_valmap_stats.RData")
+```
+
+<div id="ref_fig6">
+```{r salmon polya valmap plot, fig.align="center", fig.cap="**Figure 6:** CircRNA identification in a PolyA treated dataset by Salmon. PolyA-treatment of RNA samples selectively enriches linear transcripts (transcripts containing a polyA tail). CircRNA quantification of such samples should be minimal. We used 5 replicate PolyA samples as negative controls, revealing false positive circRNA identification. **A.** Percentages of circRNAs identified by FUCHS in RNAseR dataset also identified by Salmon in PolyA dataset. The `validateMappings` option increased false positive assignments. A TMP cutoff of 1 (TPM threshold > 1) resulted in a significant decrease of identified circRNAs for both modes. S w vM: Salmon with `validateMappings`; S w/o vM: Salmon without `validateMappings`; TPM: transcripts per million. **B.** Percentage of linear transcripts identified by Salmon in our PolyA-treated dataset. The fraction of circRNAs (defined by FUCHS in RNAseR dataset) of total transcripts identified is lower when `validateMappings` is disabled. Application of the same cutoff as in A decreased both fractions. **C.** Distribution of non-zero TPM values obtained from Salmon quantification of our PolyA dataset. Distributions obtained with and without `validateMappings` enabled differ only marginally. The dashed line represents the applied cutoff of TPM > 1.", warning=FALSE, fig.height=7, fig.width=10}
+# Salmon PolyA: valMap analysis
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(cowplot)
+  library(ggpubr)
+})
+
+## plot the ratios against FUCHS (100%) [A]
+bp1 <- ggplot(data=polya_ratio_fuchs, 
+              aes(x=opt, y=val, fill=thr, label=paste(round(val,3)*100,"%"))) +
+  geom_bar(stat="identity", position="identity",colour="black") + theme_cowplot() + 
+  scale_fill_hue(c=45, l=80) + labs(x = "", y = "") +
+  geom_text(nudge_y=.045, nudge_x=.25) +
+  guides(fill=guide_legend(title="TPM threshold")) +
+  geom_errorbar(aes(ymin=val-sd, ymax=val+sd), width=.2) + ggtitle("A") +
+  theme(plot.title = element_text(hjust = -0.25, size = 14))
+## ratio of circ vs lin transcripts identified in PolyA (Salmon) [B]
+bp2 <- ggplot(data=polya_circ_stats_df, 
+              aes(x=opt, y=val, fill=thr, label=paste(round(val,3)*100,"%"))) +
+  geom_bar(stat="identity", position="identity",colour="black") + theme_cowplot() + 
+  scale_fill_hue(c=45, l=80) + labs(x = "", y = "") + 
+  geom_text(nudge_y=.003, nudge_x=.3) +
+  guides(fill=guide_legend(title="TPM threshold")) + 
+  geom_errorbar(aes(ymin=val-sd, ymax=val+sd), width=.2) + ggtitle("B") +
+  theme(plot.title = element_text(hjust = -0.25, size = 14))
+## circ transcript counts identified in PolyA (Salmon) [C]
+hist1 <- double_hist(list_s_polya$s2_g_nv, list_s_polya$s2_g_v, comb_f) + ggtitle("C") +
+  theme(plot.title = element_text(hjust = -0.25, size = 14)) +
+  guides(fill=guide_legend(title="Salmon method")) +
+  geom_vline(xintercept=1, linetype="dashed", color = "black")
+
+ggarrange(bp1,bp2,hist1, common.legend = FALSE, heights = c(1.5,1), widths = c(1.1,1))
+```
+</div>
+
+We decided to examine the rate of false positive read assignment for Salmon both with and without `validateMappings` enabled. We therefore quantified 5 PolyA-treated replicate samples originating from the same tissue as our RNAseR samples. PolyA-treatment entails specific primers selecting for polyadenylated RNAs. Since circular transcripts don't possess polyA tails, the samples almost exclusively contain linear variants. The rate of circRNA identification therefore closely represents the rate of false read assignment. 
+
+Salmon falsely identified around `r round(polya_circ_stats["nr","valMap.g0.mean"],-2)` ± `r round(polya_circ_stats["nr","valMap.g0.sd"],-2)` linear transcripts as circular with `validateMappings` and around `r round(polya_circ_stats["nr","no_valMap.g0.mean"],-2)` ± `r round(polya_circ_stats["nr","no_valMap.g0.sd"],-2)` without `validateMappings`. Salmon quantification without `validateMappings` reduced the number of falsely identified circRNAs on average by a factor of  `r round(as.numeric(1/polya_stats_ratio["nr"]),1)`. Consideration of the counts (TPM in this case) that were assigned to these false circRNAs is crucial to avoid choosing an option that finds fewer false transcript entities but in turn assigns them large quantities of reads (<a href="#ref_fig6">Figure 6C</a>). Neither median TPM value surpassed `r round(polya_circ_stats["median","valMap.g0.mean"],1) + .1`. On average, the median values received without `validateMappings` were `r round(100 - as.numeric(polya_stats_ratio["median"])*100)` % smaller than those received with. The maximum values received without `validateMappings` were `r round(((as.numeric(polya_stats_ratio["max"])) -1) *100)` % larger. Based on all the findings we decided to use quantifications generated without `validateMappings` for the following analyses.  
+
+Applying a cutoff at a TPM value of 1 significantly reduced the rate of false positive results for both Salmon methods. The fraction of FUCHS RNAseR circRNAs also encountered in Salmon PolyA quantifications decreased on average by a factor of `r round(mean(c(polya_ratio_fuchs[1,"val"]*100/(polya_ratio_fuchs[3,"val"]*100), polya_ratio_fuchs[2,"val"]*100/(polya_ratio_fuchs[4,"val"]*100))) ,1)` (<a href="#ref_fig6">Figure 6A</a>). The ratio of circRNAs in each Salmon quantification was reduced on average by a factor of `r round(mean(c(polya_circ_stats["circ.ratio","valMap.g0.mean"]/(polya_circ_stats["circ.ratio","valMap.g1.mean"]), polya_circ_stats["circ.ratio","no_valMap.g0.mean"]/(polya_circ_stats["circ.ratio","no_valMap.g1.mean"]))) ,1)` (<a href="#ref_fig6">Figure 6B</a>).  
+
+We used the quantifications obtained with FUCHS to assess successfully identified circRNA transcripts. This means that our analysis is limited by the quality constraints of FUCHS. The fact that we identified `r mean(c(1,2,2,1,4))` ± `r round(sd(c(1,2,2,1,4)))` circRNAs in our PolyA data via FUCHS supports our understanding of FUCHS as a selective and conservative method. Since differentiation between circular and linear transcripts is based on circRNAs identified by FUCHS, our false positive rate analysis of Salmon might be lenient.  
+
+Other aspects worth considering are the differences in count distribution between linear and circular RNA for both the RNAseR and PolyA datasets. Assuming that the different sample treatments worked as intended, we would expect few instances and low counts of linear as well as many instances and high counts of circular RNA in the RNAseR dataset, and the opposite in the PolyA dataset. 
+
+```{r salmon lin vs. circ ratios, eval=FALSE}
+```
+
+```{r load tx stats}
+load("salmon_tx_stats.RData")
+```
+
+
+In the case of our RNAseR treated samples, Salmon identified `r format(round(mean(as.numeric(s_rnaser_tx_stats["nc_tx",grepl("_g_nv.all.g0", colnames(s_rnaser_tx_stats))])),-3), scientific=FALSE)` ± `r format(round(sd(as.numeric(s_rnaser_tx_stats["nc_tx",grepl("_g_nv.all.g0", colnames(s_rnaser_tx_stats))])),-3), scientific=FALSE)` transcripts (non-zero counts). Only about 1/7th of them could be identified as circular based on an index generated by circRNA isoform reconstruction of the same dataset by FUCHS. Once we applied a soft filter to disregard low-count transcripts, the fraction of circRNAs increased to 1/3rd of all identified transcripts (<a href="#ref_fig7">Figure 7</a>). A comparison of TPM distributions between linear and circular RNAs revealed higher average values assigned to circular transcripts (<a href="#ref_fig8">Figure 8A</a>). 
+
+In the case of the PolyA treated samples, Salmon in turn identified `r format(round(mean(as.numeric(s_polya_tx_stats["nc_tx",grepl("_g_nv.all.g0", colnames(s_polya_tx_stats))])),-3), scientific=FALSE)` ± `r format(round(sd(as.numeric(s_polya_tx_stats["nc_tx",grepl("_g_nv.all.g0", colnames(s_polya_tx_stats))])),-3), scientific=FALSE)` transcripts. Only a small fraction was identified as circular based on the same index as in the RNAseR case. After applying the same soft cutoff, the fraction decreased even further (<a href="#ref_fig7">Figure 7</a>). TPM distributions revealed a very narrow range occupied by circular transcripts, concentrated at low values (<a href="#ref_fig8">Figure 8B</a>).
+
+For both datasets the overall pattern of TPM distributions as well as the respective trend of circular transcript fraction after TPM cutoff application fit our expectations.
+
+<div id="ref_fig7">
+```{r circ stats plot, fig.align="center", fig.cap=paste("**Figure 7:** Fraction of identified circRNAs by Salmon in RNAseR and PolyA datasets. RNAseR-treated datasets are enriched for circular transcripts. In our RNAseR samples Salmon was able to identify", round(mean(circ_ratio_s["val"][circ_ratio_s["thr"]=="> 0" & circ_ratio_s["set"]=="RNAseR"])*100,1), "±", round(sd(circ_ratio_s["val"][circ_ratio_s["thr"]=="> 0" & circ_ratio_s["set"]=="RNAseR"])*100,1), "% of circRNAs that FUCHS identified when no cutoff was applied (left, red box). When we disregarded all transcripts with TPM values smaller than 1, the circRNA fraction increased to", round(mean(circ_ratio_s["val"][circ_ratio_s["thr"]=="> 1" & circ_ratio_s["set"]=="RNAseR"])*100,1), "±", round(sd(circ_ratio_s["val"][circ_ratio_s["thr"]=="> 1" & circ_ratio_s["set"]=="RNAseR"])*100,1), "% (left, teal box). PolyA-treated datasets on the other hand are enriched for linear transcripts. In our PolyA samples Salmon identified", round(mean(circ_ratio_s["val"][circ_ratio_s["thr"]=="> 0" & circ_ratio_s["set"]=="PolyA"])*100,1), "±", round(sd(circ_ratio_s["val"][circ_ratio_s["thr"]=="> 0" & circ_ratio_s["set"]=="PolyA"])*100,1), "% of circRNAs that FUCHS identified (in the RNAseR samples) when no cutoff was applied (right, red box). Applying once again a cutoff of TPM = 1, decreased the fraction to", round(mean(circ_ratio_s["val"][circ_ratio_s["thr"]=="> 1" & circ_ratio_s["set"]=="PolyA"])*100,1), "±", round(sd(circ_ratio_s["val"][circ_ratio_s["thr"]=="> 1" & circ_ratio_s["set"]=="PolyA"])*100,1), "% (right, teal box). The RNAseR dataset contains 2 samples and the PolyA dataset 5 replicate samples. Mind the difference in the y-axis scales."), warning=FALSE}
+# Salmon RNAseR/PolyA: circ tx analysis
+
+## plot circRNA ratios for RNAseR & PolyA datasets
+ggplot(circ_ratio_s, aes(group=thr, y=val, fill=factor(thr))) + 
+  geom_boxplot() + facet_wrap(~set, scale="free_y") + theme_cowplot() + 
+  labs(y = "circRNA fraction") +
+  guides(fill=guide_legend(title="TPM threshold")) 
+```
+</div>
+
+`r round(mean(as.numeric(s_rnaser_tx_stats["nc_tx",grepl(".*_g_nv.all.g0$", colnames(s_rnaser_tx_stats))] / s_rnaser_tx_stats["nc_tx",grepl(".*_g_nv.all$", colnames(s_rnaser_tx_stats))]))*100)` ± `r round(sd(as.numeric(s_rnaser_tx_stats["nc_tx",grepl(".*_g_nv.all.g0$", colnames(s_rnaser_tx_stats))] / s_rnaser_tx_stats["nc_tx",grepl(".*_g_nv.all$", colnames(s_rnaser_tx_stats))]))*100)` % of counts obtained from the Salmon quantification of RNAseR samples and `r round(mean(as.numeric(s_polya_tx_stats["nc_tx",grepl(".*_g_nv.all.g0$", colnames(s_polya_tx_stats))] / s_polya_tx_stats["nc_tx",grepl(".*_g_nv.all$", colnames(s_polya_tx_stats))]))*100)` ± `r round(sd(as.numeric(s_polya_tx_stats["nc_tx",grepl(".*_g_nv.all.g0$", colnames(s_polya_tx_stats))] / s_polya_tx_stats["nc_tx",grepl(".*_g_nv.all$", colnames(s_polya_tx_stats))]))*100)` % of counts obtained from Salmon quantification of PolyA samples were non-zero. If a particular transcript is not found in the sample, i.e. no reads were assigned to it, it is given a TPM of 0. The more extensive the index supplied the larger the quantity of non-identified transcripts.
+
+<div id="ref_fig8">
+```{r salmon lin vs circ plot, fig.align="center", fig.cap="**Figure 8:** Density plots of TPM values generated by Salmon. Circular transcripts represent those that overlap with transcripts found by FUCHS. Salmon does not inherently differentiate between circular and linear variants. The large number of zero values are not displayed. **A.** TPM distribution of the RNAseR dataset, quantified via Salmon. The count distribution of circular transcripts covers higher values than linear ones. One sample out of two is shown. The distribution is similar for all samples. **B.** TPM distribution of the PolyA dataset, quantified via Salmon. Ideally, no circRNA are identified. TPM values of the misassigned transcripts stack at low ranges. One replicate sample out of five is shown. The distribution is similar for all samples.", warning=FALSE, fig.height=3, fig.width=8}
+# Salmon RNAseR/PolyA: lin vs. circ tx analysis
+
+## create lin vs circ TPMs plots
+density_rnaser <- lin_v_circ_plot(list_s_rnaser_our$young_g_nv, comb_f) + ggtitle("A") +
+  theme(plot.title = element_text(hjust = -0.2, size = 14))
+density_polya <- lin_v_circ_plot(list_s_polya$s1_g_nv, comb_f) + ggtitle("B") +
+  theme(plot.title = element_text(hjust = -0.2, size = 14))
+ggarrange(density_rnaser, density_polya)
+```
+</div>
+
+Since assessment of false circRNA identification of Salmon is based on a conservative circRNA library, the obtained values might be underestimations. For the same reason our evaluation of circRNA fractions in either dataset might be underestimations as well. However, we were able to observe clear trends with regards to Salmon's `validateMappings` option and its read assignment in both RNaseR and PolyA datasets. First, the rate of false-positive circRNA identification decreases when `validateMappings` is omitted. Second, circRNA fractions increase or decrease as expected once we remove low TPM transcripts in each respective dataset.
+
+## Quantification of mixed dataset
+
+Finally, we'd like to be able to quantify circRNAs in samples that were not specifically treated for the purpose of measuring them. If we were able to accurately reconstruct circRNAs in mixed (linear & circular) samples, not only would we analyze new datasets faster and cheaper, we'd be able to gain new insights into large quantities of published libraries, harbouring data from different organisms, tissues and developmental stages.
+To test the capability of both quantification methods we use another mouse hippocampus dataset, this time RiboZero-treated, meaning it is depleted of ribosomal RNA but contains both circular and linear variants. The reads are unpaired and 42 bp long. 
+
+The FUCHS method was unsuccessful in identifying any circRNAs in the RiboZero dataset. As a consequence, we weren't able to use FUCHS reconstruction to generate an annotation index for Salmon. Since the dataset stems from the same organism and tissue we worked with to this point, we chose to use the annotation generated from our RNAseR FUCHS reconstruction, combined with a full gencode annotation instead. This provided Salmon with the library to identify both linear and circular RNA. The quantification results were then compared to the ones obtained from our RNAseR data. Correlations both with FUCHS results and Salmon results were negligible (<a href="#ref_fig8">Figure 9</a>). The low correlation between Salmon RiboZero and Salmon RNAseR results suggests that this failure to capture circRNA isoforms doesn't lie in systematic quantification errors introduced by Salmon but instead in the composition of the dataset. 
+
+<div id="ref_fig9">
+```{r salmon fuchs ribozero plot, fig.align="center", fig.cap="**Figure 9:** Correlations of quantified RiboZero and RNAseR treated samples. Since both datasets stem from the same tissue of the same organism, we would expect to see considerable correlation between their circRNA composition. **A.** Salmon quantification of both RiboZero replicate samples compared to FUCHS quantification of one of the RNAseR samples. The correlation is negligible. **B.** Salmon quantification of both RiboZero replicates compared to Salmon quantification of the same RNAseR sample as in A. Correlation is similarly low as in A, suggesting that the failure in quantifying a mixed dataset is not due to systematic errors introduced by Salmon.", warning=FALSE}
+# Salmon/FUCHS: RiboZero vs RNAseR
+
+# Our RNAseR vs RiboZero: gentrome & no_valMap
+layout(matrix(1:4, nrow = 2))
+analysis(list_f_rnaser_our$young, list_s_riboz_our$s1_g_nv)
+analysis(list_s_rnaser_our$young_g_nv, list_s_riboz_our$s1_g_nv)
+analysis(list_f_rnaser_our$young, list_s_riboz_our$s2_g_nv)
+analysis(list_s_rnaser_our$young_g_nv, list_s_riboz_our$s2_g_nv)
+mtext(expression(bold(A)), outer = TRUE,  line = -3, adj = 0)
+mtext(expression(bold(B)), outer = TRUE,  line = -21.5, adj = 0)
+```
+</div>
+
+# Discussion
+## Summary
+Our aim was to investigate the potential role of mouse hippocampus circRNAs as miRNA sponges. To achieve this we had to get information on the internal sequences of circRNAs and subsequently compute possible miRNA binding sites. Existing circRNA libraries proved unsuited, thus instigating our own quantifications. Ideally, these would be performed on RNAseq datasets not undergone prior expensive and timeconsuming treatments. This would have allowed us to extract additional valuable information on the circRNA makeup of datasets that have been previously published.  
+We compared 2 different quantification methods. FUCHS, implemented via circtools, is an established tool specifically designed to quantify circRNA isoforms. Salmon, conceived to quantify linear RNA isoforms, was implemented as an experimental method. We applied both methods to datasets treated with RNAseR, PolyA and RiboZero, the former serving as negative and positive controls respectively. FUCHS quantification was implemented as benchmark for Salmon performance. Salmon achieves a high correlation with FUCHS on our RNAseR treated samples with a substantial decrease in runtime. A Salmon option to implement additional statistical analysis did alter the correlation of the two methods minimally in one case. Its inclusion resulted in a larger quantity of false positive circRNA identifications and was thus omitted. FUCHS was unable to identify any circRNA isoforms in a dataset containing both linear and circular transcripts (RiboZero treated) and while Salmon did, the counts it observed showed no correlation to those observed in the RNAseR treated dataset of the same organism and tissue. 
+
+## Future directions
+Although we undertook tests to investigate the rate of false read assignment by Salmon, they depend on the quality of results generated by FUCHS. A less biased approach, equally allowing the assessment of FUCHS, would constitute the simulation of read sequences and subsequent analyses of quantification selectivity and sensitivity. Close emulation of real RNAseq data would be key to obtain meaningful results.  
+We found that circRNA isoform quantification requires RNAseR treated data. It is still unclear however, how data quality influences the performance of the two methods. Read length reduction and omission of one of the mates in our 250 bp paired-end RNAseR dataset would simulate lower quality samples.  
+There are alternatives to the quantification methods we chose to examine. In a next step, we could widen the scope of our analysis to include them. Ideally, we would end up with clear and streamlined circRNA quantification procedures, tailored to the experimental question and conditions at hand.  
+Finally, we would tackle miRNA binding site prediction on the identified circRNAs using the novel insights into miRNA binding affinity generated by the Bartel lab. The predictions would then be experimentally validated with CLIP data.
+
+
+
+## Conclusion
+Both methods, FUCHS and Salmon, turned out to be incapable of quantifying circRNA isoforms in a dataset containing both linear and circRNA transcripts (RiboZero treated). We suspect the low abundance of circular transcripts relative to linear ones to be the cause. This means that RNAseR treatment remains crucial for a comprehensive insight into cellular circRNA landscapes on a full sequence resolution. DCC did identify few highly expressed circRNAs in the RiboZero treated dataset. Since its quantification is solely based on reads covering BSJs, it does not provide information on the full sequences.  
+Our investigation shows that Salmon provides circRNA isoform quantification highly correlating FUCHS results at a fraction of its time expenditure when analysing RNAseR treated samples. We streamlined the process of quantification via FUCHS, generating a wrapper that integrates all necessary steps: from mapping over circRNA detection to circRNA sequence reconstruction. Correction of systematic bugs encountered in the coordinates of transcripts identified via FUCHS version 0.2.0 as well as steps necessary to generate transcript annotations for Salmon quantification were compiled into separate scripts. Our high quality RNAseR dataset, processed by FUCHS, gave rise to a comprehensive circRNA isoform annotation for the mouse hippocampus. The intended miRNA binding site analysis was put on hold in anticipation of new insights awaiting publication regarding miRNA binding affinities by the Bartel lab.
+
+# Session information
+```{r}
+sessionInfo()
+```
+
+# References
+
+
